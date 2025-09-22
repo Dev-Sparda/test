@@ -1,0 +1,214 @@
+# ------- 1
+import json
+import os
+import sys
+
+
+def get_config_path():
+    """Obtiene la ruta del archivo config.json"""
+    if getattr(sys, 'frozen', False):
+        base_path = os.path.dirname(sys.executable)
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, "config.json")
+
+
+def cargar_denominaciones():
+    """Carga las denominaciones desde config.json"""
+    config_path = get_config_path()
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            return set(config['denominaciones'])
+    except FileNotFoundError:
+        return set()  # Retorna conjunto vacío si no existe
+
+
+def guardar_denominaciones(denominaciones):
+    """Guarda las denominaciones en config.json"""
+    config_path = get_config_path()
+    config = {'denominaciones': sorted(list(denominaciones))}
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+
+def mostrar_menu(denominaciones):
+    """Muestra el menú simple de gestión"""
+    print("\n" + "=" * 40)
+    print("   GESTOR DE DENOMINACIONES")
+    print("=" * 40)
+
+    if denominaciones:
+        print("Denominaciones actuales:")
+        for i, denom in enumerate(sorted(denominaciones), 1):
+            print(f"  {i}. {denom}")
+    else:
+        print("No hay denominaciones configuradas")
+
+    print("\nOpciones:")
+    print("1. Agregar denominación")
+    print("2. Eliminar denominación")
+    print("3. Finalizar y guardar")
+    print("-" * 40)
+
+
+def ejecutar_gestor():
+    """Función principal del gestor - solo modifica el diccionario"""
+    denominaciones = cargar_denominaciones()
+
+    while True:
+        mostrar_menu(denominaciones)
+        opcion = input("Seleccione opción (1-3): ").strip()
+
+        if opcion == '1':
+            nueva = input("Denominación a agregar: ").strip().upper()
+            if nueva and nueva not in denominaciones:
+                denominaciones.add(nueva)
+                print(f"✓ '{nueva}' agregada")
+            elif nueva in denominaciones:
+                print("✗ Ya existe")
+            else:
+                print("✗ Texto inválido")
+
+        elif opcion == '2':
+            if not denominaciones:
+                print("✗ No hay denominaciones para eliminar")
+                continue
+
+            try:
+                numero = int(input("Número a eliminar: "))
+                lista_ordenada = sorted(denominaciones)
+                if 1 <= numero <= len(lista_ordenada):
+                    eliminada = lista_ordenada[numero - 1]
+                    denominaciones.remove(eliminada)
+                    print(f"✓ '{eliminada}' eliminada")
+                else:
+                    print("✗ Número fuera de rango")
+            except ValueError:
+                print("✗ Ingrese un número válido")
+
+        elif opcion == '3':
+            guardar_denominaciones(denominaciones)
+            print("✓ Configuración guardada. Saliendo...")
+            break
+
+        else:
+            print("✗ Opción inválida")
+
+
+if __name__ == "__main__":
+    ejecutar_gestor()
+
+
+# código actual------------------------------
+import json
+import os
+import sys
+
+
+def get_config_path():
+    """La misma función para obtener la ruta"""
+    if getattr(sys, 'frozen', False):
+        base_path = os.path.dirname(sys.executable)
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, "config.json")
+
+
+def cargar_denominaciones_desde_config():
+    """Carga el diccionario para usar en tu proceso"""
+    config_path = get_config_path()
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            return set(config['denominaciones'])
+    except FileNotFoundError:
+        print("❌ Error: No se encontró config.json")
+        print("   Ejecuta primero el gestor_config.py")
+        return None
+    except Exception as e:
+        print(f"❌ Error cargando configuración: {e}")
+        return None
+
+
+def tu_proceso_principal():
+    """Aquí va todo tu código actual sin modificaciones"""
+    # Cargar el diccionario desde config.json
+    denominaciones = cargar_denominaciones_desde_config()
+
+    if denominaciones is None:
+        return  # Salir si no hay configuración
+
+    print(f"🎯 Iniciando proceso con {len(denominaciones)} denominaciones:")
+    print(f"📋 {sorted(denominaciones)}")
+
+    # ⬇️⬇️⬇️ AQUÍ VA TODO TU CÓDIGO ACTUAL ⬇️⬇️⬇️
+    # Tu lógica de procesamiento exactamente como la tienes ahora
+    # ...
+
+    for denom in sorted(denominaciones):
+        print(f"Procesando: {denom}")
+
+    print("✅ Proceso completado!")
+
+
+if __name__ == "__main__":
+    tu_proceso_principal()
+
+
+#------- gestor de ejecucion
+
+import subprocess
+import sys
+import os
+
+
+def mostrar_menu_principal():
+    print("\n" + "=" * 50)
+    print("        SISTEMA DE PROCESAMIENTO")
+    print("=" * 50)
+    print("1. Configurar denominaciones")
+    print("2. Ejecutar proceso principal")
+    print("3. Salir")
+    print("-" * 50)
+
+
+def main():
+    while True:
+        mostrar_menu_principal()
+        opcion = input("Seleccione opción (1-3): ").strip()
+
+        if opcion == '1':
+            # Ejecutar el gestor de configuración
+            try:
+                subprocess.run([sys.executable, "gestor_config.py"])
+            except Exception as e:
+                print(f"Error ejecutando gestor: {e}")
+
+        elif opcion == '2':
+            # Ejecutar tu proceso principal
+            try:
+                subprocess.run([sys.executable, "tu_proceso_principal.py"])
+            except Exception as e:
+                print(f"Error ejecutando proceso: {e}")
+
+        elif opcion == '3':
+            print("¡Hasta luego!")
+            break
+
+        else:
+            print("Opción inválida")
+
+
+if __name__ == "__main__":
+    main()
+    
+    
+# Gestor de configuración (solo para modificar diccionario)
+pyinstaller --onefile --console --name "GestorDenominaciones" gestor_config.py
+
+# Tu proceso principal (tu código actual)
+pyinstaller --onefile --console --name "MiProcesoPrincipal" tu_proceso_principal.py
+
+# Menu principal (opcional)
+pyinstaller --onefile --console --name "SistemaCompleto" menu_principal.py
