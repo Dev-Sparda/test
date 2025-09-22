@@ -1,0 +1,190 @@
+import xlwings as xw
+import win32com.client
+import os
+
+def get_sensitivity_label_id(file_path, target_label_name=None):
+    """
+    Obtener los IDs de las etiquetas de sensibilidad disponibles
+    Si se proporciona un nombre, busca ese específico
+    """
+    try:
+        app = xw.App(visible=False)
+        wb = app.books.open(file_path)
+        
+        # Obtener información de la etiqueta actual
+        try:
+            current_label = wb.api.SensitivityLabel.GetLabel()
+            if current_label:
+                print(f"📋 Etiqueta actual: {getattr(current_label, 'LabelName', 'N/A')} (ID: {current_label.LabelId})")
+        except Exception as e:
+            print(f"ℹ️ No se pudo obtener etiqueta actual: {e}")
+        
+        # Intentar listar etiquetas disponibles (puede variar según la versión)
+        label_ids = {}
+        
+        # Etiquetas predefinidas comunes (puedes expandir esta lista)
+        common_labels = {
+            "Internal": None,
+            "Confidential": None, 
+            "Highly Confidential": None,
+            "Restricted": None,
+            "Public": None
+        }
+        
+        print("🔍 Buscando etiquetas disponibles...")
+        
+        # Método alternativo: probar con etiquetas conocidas
+        for label_name in common_labels.keys():
+            try:
+                label_info = wb.api.SensitivityLabel.CreateLabelInfo()
+                label_info.LabelName = label_name
+                # Intentar aplicar temporalmente para obtener ID
+                wb.api.SensitivityLabel.SetLabel(label_info, label_info)
+                common_labels[label_name] = label_info.LabelId
+                print(f"✅ {label_name}: {label_info.LabelId}")
+            except:
+                print(f"❌ {label_name}: No disponible")
+        
+        wb.close()
+        app.quit()
+        
+        return common_labels
+        
+    except Exception as e:
+        print(f"❌ Error obteniendo IDs: {e}")
+        return {}
+
+def set_sensitivity_label(file_path, new_label_name="Internal", label_id=None):
+    """
+    Cambiar la etiqueta de sensibilidad de un archivo Excel
+    """
+    app = None
+    try:
+        # Iniciar Excel
+        app = xw.App(visible=False)
+        
+        # Abrir el workbook
+        wb = app.books.open(file_path)
+        
+        # Crear objeto de información de etiqueta
+        label_info = wb.api.SensitivityLabel.CreateLabelInfo()
+        
+        if label_id:
+            # Usar ID específico si se proporciona
+            label_info.LabelId = label_id
+            label_info.AssignmentMethod = 1  # Standard assignment
+        else:
+            # Usar nombre de etiqueta
+            label_info.LabelName = new_label_name
+            label_info.AssignmentMethod = 2  # Manual assignment
+        
+        label_info.Justification = "Cambiando de Restricted a Internal"
+        
+        # Aplicar la nueva etiqueta
+        wb.api.SensitivityLabel.SetLabel(label_info, label_info)
+        
+        # Guardar cambios
+        wb.save()
+        wb.close()
+        app.quit()
+        
+        print(f"✅ Etiqueta cambiada exitosamente a: {new_label_name}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error cambiando etiqueta: {e}")
+        if app:
+            app.quit()
+        return False
+
+def downgrade_from_restricted_to_internal(file_path):
+    """
+    Flujo completo para bajar de Restricted/Confidential a Internal
+    """
+    
+    # Paso 1: Obtener IDs disponibles
+    print("🔄 Obteniendo información de etiquetas...")
+    available_labels = get_sensitivity_label_id(file_path)
+    
+    # Paso 2: Buscar ID para "Internal"
+    internal_id = None
+    for label_name, label_id in available_labels.items():
+        if label_id and "internal" in label_name.lower():
+            internal_id = label_id
+            break
+    
+    if not internal_id:
+        # Si no encontramos ID, intentar con el nombre directamente
+        print("⚠️ No se encontró ID para 'Internal', intentando con nombre...")
+        internal_id = None
+    
+    # Paso 3: Aplicar cambio
+    print("🔄 Aplicando nueva etiqueta...")
+    success = set_sensitivity_label(file_path, "Internal", internal_id)
+    
+    return success
+
+# Versión simplificada para prueba rápida
+def quick_sensitivity_change(file_path, target_label="Internal"):
+    """
+    Método directo sin obtener IDs primero
+    """
+    try:
+        app = xw.App(visible=False)
+        wb = app.books.open(file_path)
+        
+        # Obtener etiqueta actual primero
+        try:
+            current = wb.api.SensitivityLabel.GetLabel()
+            if current:
+                print(f"🏷️ Etiqueta actual: {getattr(current, 'LabelName', 'Desconocida')}")
+        except:
+            print("ℹ️ No se pudo leer etiqueta actual")
+        
+        # Configurar nueva etiqueta
+        label_info = wb.api.SensitivityLabel.CreateLabelInfo()
+        label_info.LabelName = target_label
+        label_info.AssignmentMethod = 2  # Manual
+        label_info.Justification = "Downgrade de confidencialidad"
+        
+        # Aplicar
+        wb.api.SensitivityLabel.SetLabel(label_info, label_info)
+        
+        # Verificar cambio
+        new_label = wb.api.SensitivityLabel.GetLabel()
+        if new_label:
+            print(f"✅ Nueva etiqueta: {getattr(new_label, 'LabelName', 'Aplicada')}")
+        
+        wb.save()
+        wb.close()
+        app.quit()
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error en cambio rápido: {e}")
+        return False
+
+# EJECUCIÓN
+if __name__ == "__main__":
+    file_path = "ruta/a/tu/archivo.xlsx"
+    
+    # Hacer backup primero
+    import shutil
+    backup_path = file_path.replace('.xlsx', '_backup.xlsx')
+    shutil.copy2(file_path, backup_path)
+    print(f"📂 Backup creado: {backup_path}")
+    
+    # Método 1: Flujo completo
+    print("🎯 Método 1: Flujo completo")
+    if downgrade_from_restricted_to_internal(file_path):
+        print("🎉 ¡Éxito!")
+    else:
+        print("😞 Falló el método 1, intentando método rápido...")
+        
+        # Método 2: Directo
+        print("🎯 Método 2: Cambio rápido")
+        if quick_sensitivity_change(file_path, "Internal"):
+            print("🎉 ¡Éxito con método rápido!")
+        else:
+            print("❌ Todos los métodos fallaron")
