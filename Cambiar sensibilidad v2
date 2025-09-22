@@ -1,0 +1,165 @@
+import xlwings as xw
+import os
+
+def set_sensitivity_label_by_id(file_path, label_id, label_name="", justification="Cambio de confidencialidad"):
+    """
+    Cambiar etiqueta usando ID específico (MÉTODO MÁS CONFIABLE)
+    """
+    app = None
+    try:
+        app = xw.App(visible=False)
+        wb = app.books.open(file_path)
+        
+        # Crear objeto de información de etiqueta
+        label_info = wb.api.SensitivityLabel.CreateLabelInfo()
+        label_info.LabelId = label_id
+        label_info.AssignmentMethod = 1  # Standard assignment
+        label_info.Justification = justification
+        
+        # Aplicar la nueva etiqueta
+        wb.api.SensitivityLabel.SetLabel(label_info, label_info)
+        
+        # Guardar cambios
+        wb.save()
+        wb.close()
+        app.quit()
+        
+        print(f"✅ Etiqueta cambiada exitosamente a: {label_name or label_id}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error cambiando etiqueta: {e}")
+        if app:
+            app.quit()
+        return False
+
+# Diccionario con tus IDs específicos
+YOUR_LABEL_IDS = {
+    "Public": "a6f6eaf1-b216-4f37-a6a0-0c76c4ac5b76",
+    "Internal": "f42c0d66-b2b6-4d1a-9a56-8f7b2a2b2a2b", 
+    "Confidential": "c64c6a6a-7a2a-4e2a-9a2a-2a2a2a2a2a2a",
+    "Restricted": "d75a3a3a-3a3a-4a3a-9a3a-3a3a3a3a3a3a",
+    "Highly Confidential": "e86b4b4b-4b4b-5b4b-9b4b-4b4b4b4b4b4b"
+}
+
+def downgrade_with_known_ids(file_path, from_label="Restricted", to_label="Internal"):
+    """
+    Cambiar etiqueta usando IDs conocidos
+    """
+    if to_label not in YOUR_LABEL_IDS:
+        print(f"❌ Etiqueta '{to_label}' no encontrada en el diccionario")
+        print(f"📋 Etiquetas disponibles: {list(YOUR_LABEL_IDS.keys())}")
+        return False
+    
+    label_id = YOUR_LABEL_IDS[to_label]
+    justification = f"Downgrade de {from_label} a {to_label}"
+    
+    return set_sensitivity_label_by_id(file_path, label_id, to_label, justification)
+
+# Función para detectar la etiqueta actual y luego cambiarla
+def detect_and_change_label(file_path, target_label="Internal"):
+    """
+    Detectar etiqueta actual y cambiarla a la deseada
+    """
+    app = None
+    try:
+        app = xw.App(visible=False)
+        wb = app.books.open(file_path)
+        
+        # Obtener etiqueta actual
+        current_label_info = wb.api.SensitivityLabel.GetLabel()
+        if current_label_info:
+            current_name = getattr(current_label_info, 'LabelName', 'Desconocida')
+            current_id = getattr(current_label_info, 'LabelId', 'No disponible')
+            print(f"🏷️ Etiqueta actual: {current_name} (ID: {current_id})")
+        else:
+            print("ℹ️ No hay etiqueta de sensibilidad aplicada")
+        
+        wb.close()
+        app.quit()
+        
+        # Cambiar a la etiqueta objetivo
+        if target_label in YOUR_LABEL_IDS:
+            return downgrade_with_known_ids(file_path, current_name, target_label)
+        else:
+            print(f"❌ Etiqueta objetivo '{target_label}' no encontrada")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error detectando etiqueta: {e}")
+        if app:
+            app.quit()
+        return False
+
+# Versión interactiva
+def interactive_label_changer(file_path):
+    """
+    Interfaz interactiva para cambiar etiquetas
+    """
+    print("🏷️ ETIQUETAS DE CONFIDENCIALIDAD DISPONIBLES:")
+    for i, (label_name, label_id) in enumerate(YOUR_LABEL_IDS.items(), 1):
+        print(f"{i}. {label_name}")
+    
+    print("\n¿A qué etiqueta quieres cambiar?")
+    
+    try:
+        choice = input("Ingresa el número o nombre de la etiqueta: ").strip()
+        
+        # Si ingresó un número
+        if choice.isdigit():
+            choice_idx = int(choice) - 1
+            if 0 <= choice_idx < len(YOUR_LABEL_IDS):
+                target_label = list(YOUR_LABEL_IDS.keys())[choice_idx]
+            else:
+                print("❌ Número inválido")
+                return False
+        else:
+            # Si ingresó un nombre
+            if choice in YOUR_LABEL_IDS:
+                target_label = choice
+            else:
+                print("❌ Nombre de etiqueta inválido")
+                return False
+        
+        justification = input("Justificación (opcional): ").strip()
+        if not justification:
+            justification = f"Cambio a {target_label}"
+        
+        label_id = YOUR_LABEL_IDS[target_label]
+        
+        return set_sensitivity_label_by_id(file_path, label_id, target_label, justification)
+        
+    except Exception as e:
+        print(f"❌ Error en interfaz interactiva: {e}")
+        return False
+
+# EJECUCIÓN PRINCIPAL
+if __name__ == "__main__":
+    file_path = "ruta/a/tu/archivo.xlsx"
+    
+    # Hacer backup
+    import shutil
+    backup_path = file_path.replace('.xlsx', '_backup.xlsx')
+    shutil.copy2(file_path, backup_path)
+    print(f"📂 Backup creado: {backup_path}")
+    
+    # Método 1: Cambio directo
+    print("🎯 Método 1: Cambio directo a Internal")
+    if downgrade_with_known_ids(file_path, "Restricted", "Internal"):
+        print("🎉 ¡Éxito!")
+    else:
+        print("😞 Falló el método 1")
+    
+    # Método 2: Detectar y cambiar
+    print("\n🎯 Método 2: Detectar y cambiar")
+    if detect_and_change_label(file_path, "Internal"):
+        print("🎉 ¡Éxito!")
+    else:
+        print("😞 Falló el método 2")
+    
+    # Método 3: Interactivo (descomentar si lo quieres usar)
+    # print("\n🎯 Método 3: Interactivo")
+    # if interactive_label_changer(file_path):
+    #     print("🎉 ¡Éxito!")
+    # else:
+    #     print("😞 Falló el método 3")
