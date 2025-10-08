@@ -10,8 +10,12 @@ SELECT
     CASE 
         WHEN SUM(CASE WHEN e.CONCEPTO = '15694' THEN e.MONTO ELSE 0 END) > 0 
             AND SUM(CASE WHEN e.CONCEPTO = '15685' THEN e.MONTO ELSE 0 END) >= 
-                GREATEST(0, SUM(CASE WHEN e.CONCEPTO = '15694' THEN e.MONTO ELSE 0 END) - 
-                             SUM(CASE WHEN e.CONCEPTO = '15683' THEN e.MONTO ELSE 0 END))
+                CASE WHEN (SUM(CASE WHEN e.CONCEPTO = '15694' THEN e.MONTO ELSE 0 END) - 
+                          SUM(CASE WHEN e.CONCEPTO = '15683' THEN e.MONTO ELSE 0 END)) > 0 
+                     THEN (SUM(CASE WHEN e.CONCEPTO = '15694' THEN e.MONTO ELSE 0 END) - 
+                           SUM(CASE WHEN e.CONCEPTO = '15683' THEN e.MONTO ELSE 0 END))
+                     ELSE 0 
+                END
             AND SUM(CASE WHEN e.CONCEPTO = '15685' THEN e.MONTO ELSE 0 END) <= 
                 SUM(CASE WHEN e.CONCEPTO = '15694' THEN e.MONTO ELSE 0 END)
         THEN 1 
