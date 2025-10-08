@@ -31,36 +31,76 @@ GROUP BY fecha.FECHA_DATOS, subsidiarias.SUBSIDIARIA;
 
 
 ----2----
+WITH datos_entradas AS (
+    SELECT 
+        FECHA_DATOS,
+        SUBSIDIARIA,
+        CONCEPTO,
+        SUM(MONTO) as MONTO_TOTAL
+    FROM ENTRADAS
+    WHERE FECHA_DATOS = 'tu_fecha_here'
+        AND CONCEPTO IN ('10376', '1093')
+    GROUP BY FECHA_DATOS, SUBSIDIARIA, CONCEPTO
+),
+datos_otra_tabla AS (
+    SELECT 
+        FECHA_DATOS,
+        SUBSIDIARIA,
+        CONCEPTO,
+        SUM(MONTO) as MONTO_TOTAL
+    FROM OTRA_TABLA
+    WHERE FECHA_DATOS = 'tu_fecha_here'
+        AND CONCEPTO = '15701'
+    GROUP BY FECHA_DATOS, SUBSIDIARIA, CONCEPTO
+),
+combinacion_base AS (
+    SELECT 
+        fecha.FECHA_DATOS,
+        subsidiarias.SUBSIDIARIA
+    FROM (SELECT DISTINCT FECHA_DATOS FROM ENTRADAS WHERE FECHA_DATOS = 'tu_fecha_here') fecha
+    CROSS JOIN (SELECT DISTINCT SUBSIDIARIA FROM ENTRADAS) subsidiarias
+),
+datos_completos AS (
+    SELECT 
+        cb.FECHA_DATOS,
+        cb.SUBSIDIARIA,
+        -- Concepto A (10376)
+        (SELECT MONTO_TOTAL FROM datos_entradas 
+         WHERE FECHA_DATOS = cb.FECHA_DATOS 
+         AND SUBSIDIARIA = cb.SUBSIDIARIA 
+         AND CONCEPTO = '10376') AS MONTO_A,
+        
+        -- Concepto C (1093)
+        (SELECT MONTO_TOTAL FROM datos_entradas 
+         WHERE FECHA_DATOS = cb.FECHA_DATOS 
+         AND SUBSIDIARIA = cb.SUBSIDIARIA 
+         AND CONCEPTO = '1093') AS MONTO_C,
+        
+        -- Concepto B (15701) desde otra tabla
+        (SELECT MONTO_TOTAL FROM datos_otra_tabla 
+         WHERE FECHA_DATOS = cb.FECHA_DATOS 
+         AND SUBSIDIARIA = cb.SUBSIDIARIA 
+         AND CONCEPTO = '15701') AS MONTO_B
+    FROM combinacion_base cb
+)
 SELECT 
-    fecha.FECHA_DATOS,
-    subsidiarias.SUBSIDIARIA,
+    FECHA_DATOS,
+    SUBSIDIARIA,
     '1093' AS CONCEPTO_C,
-    SUM(CASE WHEN e.CONCEPTO = '1093' THEN e.MONTO ELSE NULL END) AS MONTO_C,
+    MONTO_C,
     '10376' AS CONCEPTO_A,
-    SUM(CASE WHEN e.CONCEPTO = '10376' THEN e.MONTO ELSE NULL END) AS MONTO_A,
+    MONTO_A,
     '15701' AS CONCEPTO_B,
-    SUM(CASE WHEN e2.CONCEPTO = '15701' THEN e2.MONTO ELSE NULL END) AS MONTO_B,
+    MONTO_B,
     CASE 
-        WHEN SUM(CASE WHEN e.CONCEPTO = '1093' THEN e.MONTO ELSE NULL END) IS NULL THEN NULL
-        WHEN SUM(CASE WHEN e.CONCEPTO = '1093' THEN e.MONTO ELSE 0 END) > 0 
-            AND SUM(CASE WHEN e.CONCEPTO = '10376' THEN e.MONTO ELSE 0 END) >= 
-                CASE WHEN (SUM(CASE WHEN e.CONCEPTO = '1093' THEN e.MONTO ELSE 0 END) - 
-                          SUM(CASE WHEN e2.CONCEPTO = '15701' THEN e2.MONTO ELSE 0 END)) > 0 
-                     THEN (SUM(CASE WHEN e.CONCEPTO = '1093' THEN e.MONTO ELSE 0 END) - 
-                           SUM(CASE WHEN e2.CONCEPTO = '15701' THEN e2.MONTO ELSE 0 END))
-                     ELSE 0 
-                END
-            AND SUM(CASE WHEN e.CONCEPTO = '10376' THEN e.MONTO ELSE 0 END) <= 
-                SUM(CASE WHEN e.CONCEPTO = '1093' THEN e.MONTO ELSE 0 END)
-        THEN 1 
-        ELSE 2 
+        WHEN MONTO_C IS NULL THEN NULL
+        WHEN MONTO_C > 0 AND MONTO_A IS NOT NULL AND MONTO_B IS NOT NULL THEN
+            CASE 
+                WHEN MONTO_A >= CASE WHEN (MONTO_C - MONTO_B) > 0 THEN (MONTO_C - MONTO_B) ELSE 0 END
+                   AND MONTO_A <= MONTO_C 
+                THEN 1 
+                ELSE 2 
+            END
+        ELSE 2
     END AS RESULTADO
-FROM (SELECT 'tu_fecha_here' AS FECHA_DATOS) fecha
-CROSS JOIN (SELECT DISTINCT SUBSIDIARIA FROM ENTRADAS) subsidiarias
-LEFT JOIN ENTRADAS e ON fecha.FECHA_DATOS = e.FECHA_DATOS 
-    AND subsidiarias.SUBSIDIARIA = e.SUBSIDIARIA
-    AND e.CONCEPTO IN ('10376', '1093')
-LEFT JOIN OTRA_TABLA e2 ON fecha.FECHA_DATOS = e2.FECHA_DATOS 
-    AND subsidiarias.SUBSIDIARIA = e2.SUBSIDIARIA
-    AND e2.CONCEPTO = '15701'
-GROUP BY fecha.FECHA_DATOS, subsidiarias.SUBSIDIARIA;
+FROM datos_completos;
