@@ -232,3 +232,126 @@ WHERE
    a.RFC <> h.RFC)
 ORDER BY a.id_cliente, h.PERIODO;
 
+-------i
+WITH actual AS (
+  SELECT
+    CRED || '_' || NUM_CRED AS id_cliente,
+    NOMBRE,
+    NUM_CLIENTE,
+    RFC,
+    COUNT(DISTINCT NOMBRE) AS nombres_distintos,
+    COUNT(DISTINCT NUM_CLIENTE) AS num_cli_distintos,
+    COUNT(DISTINCT RFC) AS rfc_distintos
+  FROM tabla_492
+  WHERE PERIODO = :PERIODO_ACTUAL
+  GROUP BY CRED, NUM_CRED, CRED || '_' || NUM_CRED
+)
+SELECT
+  id_cliente,
+  nombres_distintos,
+  num_cli_distintos,
+  rfc_distintos
+FROM actual
+WHERE nombres_distintos > 1
+   OR num_cli_distintos > 1
+   OR rfc_distintos > 1
+ORDER BY id_cliente;
+
+
+WITH actual AS (
+  SELECT
+    CRED || '_' || NUM_CRED AS id_cliente,
+    CRED,
+    NUM_CRED,
+    NOMBRE,
+    NUM_CLIENTE,
+    RFC,
+    PERIODO
+  FROM tabla_492
+  WHERE PERIODO = :PERIODO_ACTUAL
+),
+historico AS (
+  SELECT
+    CRED || '_' || NUM_CRED AS id_cliente,
+    NOMBRE,
+    NUM_CLIENTE,
+    RFC,
+    PERIODO
+  FROM historico
+)
+SELECT
+  a.id_cliente,
+  a.PERIODO AS PERIODO_ACTUAL,
+  h.PERIODO AS PERIODO_HIST,
+  CASE WHEN a.NOMBRE <> h.NOMBRE THEN h.NOMBRE ELSE NULL END AS NOMBRE_HIST_DIF,
+  CASE WHEN a.NUM_CLIENTE <> h.NUM_CLIENTE THEN h.NUM_CLIENTE ELSE NULL END AS NUM_CLIENTE_HIST_DIF,
+  CASE WHEN a.RFC <> h.RFC THEN h.RFC ELSE NULL END AS RFC_HIST_DIF
+FROM actual a
+JOIN historico h
+  ON a.id_cliente = h.id_cliente
+WHERE 
+  (a.NOMBRE <> h.NOMBRE OR
+   a.NUM_CLIENTE <> h.NUM_CLIENTE OR
+   a.RFC <> h.RFC)
+ORDER BY a.id_cliente, h.PERIODO;
+
+kkkkkk
+
+WITH actual AS (
+  SELECT
+    CRED || '_' || NUM_CRED AS id_cliente,
+    CRED,
+    NUM_CRED,
+    NOMBRE,
+    NUM_CLIENTE,
+    RFC,
+    PERIODO
+  FROM tabla_492
+  WHERE PERIODO = :PERIODO_ACTUAL  -- 👈 filtra el periodo a validar
+),
+historico AS (
+  SELECT
+    CRED || '_' || NUM_CRED AS id_cliente,
+    NOMBRE,
+    NUM_CLIENTE,
+    RFC,
+    PERIODO
+  FROM historico
+)
+SELECT
+  a.id_cliente,
+  a.PERIODO AS PERIODO_ACTUAL,
+  h.PERIODO AS PERIODO_HIST,
+  
+  -- 🔹 NOMBRE
+  a.NOMBRE AS NOMBRE_ACTUAL,
+  h.NOMBRE AS NOMBRE_HIST,
+  CASE 
+    WHEN a.NOMBRE <> h.NOMBRE THEN 'DIFERENTE' 
+    ELSE NULL 
+  END AS DIF_NOMBRE,
+  
+  -- 🔹 NUM_CLIENTE
+  a.NUM_CLIENTE AS NUM_CLIENTE_ACTUAL,
+  h.NUM_CLIENTE AS NUM_CLIENTE_HIST,
+  CASE 
+    WHEN a.NUM_CLIENTE <> h.NUM_CLIENTE THEN 'DIFERENTE' 
+    ELSE NULL 
+  END AS DIF_NUM_CLIENTE,
+  
+  -- 🔹 RFC
+  a.RFC AS RFC_ACTUAL,
+  h.RFC AS RFC_HIST,
+  CASE 
+    WHEN a.RFC <> h.RFC THEN 'DIFERENTE' 
+    ELSE NULL 
+  END AS DIF_RFC
+
+FROM actual a
+JOIN historico h
+  ON a.id_cliente = h.id_cliente
+WHERE 
+  (a.NOMBRE <> h.NOMBRE OR
+   a.NUM_CLIENTE <> h.NUM_CLIENTE OR
+   a.RFC <> h.RFC)
+ORDER BY a.id_cliente, h.PERIODO;
