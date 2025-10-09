@@ -1,6 +1,6 @@
 SELECT 
     fecha.FECHA_DATOS,
-    subsidiarias.SUBSIDIARIA,
+    subsidiarias.SUBSIDIARIA
     '15694' AS CONCEPTO_C,
     SUM(CASE WHEN e.CONCEPTO = '15694' THEN e.MONTO ELSE NULL END) AS MONTO_C,
     '15685' AS CONCEPTO_A,
@@ -127,3 +127,25 @@ LEFT JOIN ENTRADAS e ON fecha.FECHA_DATOS = e.FECHA_DATOS
     AND subsidiarias.SUBSIDIARIA = e.SUBSIDIARIA
     AND e.CONCEPTO IN ('10378', '10386')
 GROUP BY fecha.FECHA_DATOS, subsidiarias.SUBSIDIARIA;
+
+
+
+rrr
+
+SELECT 
+    CRED, 
+    NUM_CRED,
+    COUNT(DISTINCT nombre) AS variaciones_nombre,
+    COUNT(DISTINCT rfc) AS variaciones_rfc,
+    COUNT(DISTINCT numero_cliente) AS variaciones_num_cliente,
+    COUNT(DISTINCT curp) AS variaciones_curp,
+    COUNT(*) AS total_registros
+FROM 
+    tu_tabla
+GROUP BY 
+    CRED, NUM_CRED
+HAVING 
+    COUNT(DISTINCT nombre) > 1 
+    OR COUNT(DISTINCT rfc) > 1
+    OR COUNT(DISTINCT numero_cliente) > 1
+    OR COUNT(DISTINCT curp) > 1;
