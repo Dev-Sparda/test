@@ -3,14 +3,30 @@ WITH fecha_anterior AS (
     FROM ENTRADAS 
     WHERE FECHA_DATOS < 'tu_fecha_actual'
 ),
-datos_n AS (
+datos_n_entradas AS (
     SELECT 
         e.SUBSIDIARIA,
-        SUM(e.MONTO) as MONTO_N
+        SUM(e.MONTO) as MONTO_N_ENTRADAS
     FROM ENTRADAS e
     WHERE e.FECHA_DATOS IN ('tu_fecha_actual', (SELECT FECHA_ANTERIOR FROM fecha_anterior))
-        AND e.CONCEPTO IN ('10386', '10393', '15964', '15701')
+        AND e.CONCEPTO IN ('15964', '15701')
     GROUP BY e.SUBSIDIARIA
+),
+datos_n_salidas AS (
+    SELECT 
+        s.SUBSIDIARIA,
+        SUM(s.MONTO) as MONTO_N_SALIDAS
+    FROM SALIDAS s
+    WHERE s.FECHA_DATOS IN ('tu_fecha_actual', (SELECT FECHA_ANTERIOR FROM fecha_anterior))
+        AND s.CONCEPTO IN ('10386', '10393')
+    GROUP BY s.SUBSIDIARIA
+),
+datos_n_completo AS (
+    SELECT 
+        COALESCE(ne.SUBSIDIARIA, ns.SUBSIDIARIA) AS SUBSIDIARIA,
+        COALESCE(ne.MONTO_N_ENTRADAS, 0) + COALESCE(ns.MONTO_N_SALIDAS, 0) AS MONTO_N
+    FROM datos_n_entradas ne
+    FULL OUTER JOIN datos_n_salidas ns ON ne.SUBSIDIARIA = ns.SUBSIDIARIA
 ),
 datos_o AS (
     SELECT 
@@ -25,11 +41,15 @@ combinacion_base AS (
     SELECT DISTINCT SUBSIDIARIA 
     FROM ENTRADAS
     WHERE FECHA_DATOS = 'tu_fecha_actual'
+    UNION
+    SELECT DISTINCT SUBSIDIARIA 
+    FROM SALIDAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
 )
 SELECT 
     'tu_fecha_actual' AS FECHA_DATOS,
     cb.SUBSIDIARIA,
-    '10386+10393+15964+15701' AS CONCEPTO_N,
+    '15964+15701(ENTRADAS)+10386+10393(SALIDAS)' AS CONCEPTO_N,
     COALESCE(dn.MONTO_N, 0) AS MONTO_N,
     '10377' AS CONCEPTO_O,
     COALESCE(do.MONTO_O, 0) AS MONTO_O,
@@ -39,5 +59,5 @@ SELECT
         ELSE 1  -- Si N <= 0, no aplica la validación (cumple)
     END AS RESULTADO
 FROM combinacion_base cb
-LEFT JOIN datos_n dn ON cb.SUBSIDIARIA = dn.SUBSIDIARIA
+LEFT JOIN datos_n_completo dn ON cb.SUBSIDIARIA = dn.SUBSIDIARIA
 LEFT JOIN datos_o do ON cb.SUBSIDIARIA = do.SUBSIDIARIA;
