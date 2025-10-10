@@ -1,0 +1,43 @@
+WITH fecha_anterior AS (
+    SELECT MAX(FECHA_DATOS) as FECHA_ANTERIOR
+    FROM ENTRADAS 
+    WHERE FECHA_DATOS < 'tu_fecha_actual'
+),
+datos_n AS (
+    SELECT 
+        e.SUBSIDIARIA,
+        SUM(e.MONTO) as MONTO_N
+    FROM ENTRADAS e
+    WHERE e.FECHA_DATOS IN ('tu_fecha_actual', (SELECT FECHA_ANTERIOR FROM fecha_anterior))
+        AND e.CONCEPTO IN ('10386', '10393', '15964', '15701')
+    GROUP BY e.SUBSIDIARIA
+),
+datos_o AS (
+    SELECT 
+        e.SUBSIDIARIA,
+        SUM(e.MONTO) as MONTO_O
+    FROM ENTRADAS e
+    WHERE e.FECHA_DATOS = 'tu_fecha_actual'
+        AND e.CONCEPTO = '10377'
+    GROUP BY e.SUBSIDIARIA
+),
+combinacion_base AS (
+    SELECT DISTINCT SUBSIDIARIA 
+    FROM ENTRADAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
+)
+SELECT 
+    'tu_fecha_actual' AS FECHA_DATOS,
+    cb.SUBSIDIARIA,
+    '10386+10393+15964+15701' AS CONCEPTO_N,
+    COALESCE(dn.MONTO_N, 0) AS MONTO_N,
+    '10377' AS CONCEPTO_O,
+    COALESCE(do.MONTO_O, 0) AS MONTO_O,
+    CASE 
+        WHEN COALESCE(dn.MONTO_N, 0) > 0 AND COALESCE(do.MONTO_O, 0) > 0 THEN 1
+        WHEN COALESCE(dn.MONTO_N, 0) > 0 AND COALESCE(do.MONTO_O, 0) <= 0 THEN 2
+        ELSE 1  -- Si N <= 0, no aplica la validación (cumple)
+    END AS RESULTADO
+FROM combinacion_base cb
+LEFT JOIN datos_n dn ON cb.SUBSIDIARIA = dn.SUBSIDIARIA
+LEFT JOIN datos_o do ON cb.SUBSIDIARIA = do.SUBSIDIARIA;
