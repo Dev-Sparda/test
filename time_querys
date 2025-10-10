@@ -6,7 +6,7 @@ WITH fecha_anterior AS (
 datos_n_entradas AS (
     SELECT 
         e.SUBSIDIARIA,
-        SUM(e.MONTO) as MONTO_N_ENTRADAS
+        SUM(e.MONTO) as MONTO_N
     FROM ENTRADAS e
     WHERE e.FECHA_DATOS IN ('tu_fecha_actual', (SELECT FECHA_ANTERIOR FROM fecha_anterior))
         AND e.CONCEPTO IN ('15964', '15701')
@@ -15,7 +15,7 @@ datos_n_entradas AS (
 datos_n_salidas AS (
     SELECT 
         s.SUBSIDIARIA,
-        SUM(s.MONTO) as MONTO_N_SALIDAS
+        SUM(s.MONTO) as MONTO_N
     FROM SALIDAS s
     WHERE s.FECHA_DATOS IN ('tu_fecha_actual', (SELECT FECHA_ANTERIOR FROM fecha_anterior))
         AND s.CONCEPTO IN ('10386', '10393')
@@ -23,10 +23,14 @@ datos_n_salidas AS (
 ),
 datos_n_completo AS (
     SELECT 
-        COALESCE(ne.SUBSIDIARIA, ns.SUBSIDIARIA) AS SUBSIDIARIA,
-        COALESCE(ne.MONTO_N_ENTRADAS, 0) + COALESCE(ns.MONTO_N_SALIDAS, 0) AS MONTO_N
-    FROM datos_n_entradas ne
-    FULL OUTER JOIN datos_n_salidas ns ON ne.SUBSIDIARIA = ns.SUBSIDIARIA
+        SUBSIDIARIA,
+        SUM(MONTO_N) as MONTO_N
+    FROM (
+        SELECT SUBSIDIARIA, MONTO_N FROM datos_n_entradas
+        UNION ALL
+        SELECT SUBSIDIARIA, MONTO_N FROM datos_n_salidas
+    )
+    GROUP BY SUBSIDIARIA
 ),
 datos_o AS (
     SELECT 
@@ -39,12 +43,11 @@ datos_o AS (
 ),
 combinacion_base AS (
     SELECT DISTINCT SUBSIDIARIA 
-    FROM ENTRADAS
-    WHERE FECHA_DATOS = 'tu_fecha_actual'
-    UNION
-    SELECT DISTINCT SUBSIDIARIA 
-    FROM SALIDAS
-    WHERE FECHA_DATOS = 'tu_fecha_actual'
+    FROM (
+        SELECT SUBSIDIARIA FROM ENTRADAS WHERE FECHA_DATOS = 'tu_fecha_actual'
+        UNION
+        SELECT SUBSIDIARIA FROM SALIDAS WHERE FECHA_DATOS = 'tu_fecha_actual'
+    )
 )
 SELECT 
     'tu_fecha_actual' AS FECHA_DATOS,
