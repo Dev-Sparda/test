@@ -1,0 +1,36 @@
+WITH actual AS (
+  SELECT
+    CRED || '_' || NUM_CRED AS id_cliente,
+    CRED,
+    NUM_CRED,
+    NOMBRE,
+    NUM_CLIENTE,
+    RFC,
+    PERIODO
+  FROM tabla_492
+  WHERE PERIODO = :PERIODO_ACTUAL
+),
+historico AS (
+  SELECT
+    CRED || '_' || NUM_CRED AS id_cliente,
+    CRED,
+    NUM_CRED,
+    NOMBRE,
+    NUM_CLIENTE,
+    RFC,
+    PERIODO
+  FROM historico
+)
+SELECT
+  a.id_cliente,
+  a.CRED,
+  a.NUM_CRED,
+  a.PERIODO AS PERIODO_ACTUAL,
+  h.PERIODO AS PERIODO_HIST,
+  CASE WHEN a.NOMBRE <> h.NOMBRE THEN h.NOMBRE END AS NOMBRE_DIF,
+  CASE WHEN a.NUM_CLIENTE <> h.NUM_CLIENTE THEN h.NUM_CLIENTE END AS NUM_CLIENTE_DIF,
+  CASE WHEN a.RFC <> h.RFC THEN h.RFC END AS RFC_DIF
+FROM actual a
+JOIN historico h
+  ON a.id_cliente = h.id_cliente
+ORDER BY a.id_cliente, h.PERIODO;
