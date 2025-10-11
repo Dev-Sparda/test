@@ -66,3 +66,69 @@ SELECT
 FROM combinacion_base cb
 LEFT JOIN datos_k dk ON cb.SUBSIDIARIA = dk.SUBSIDIARIA
 LEFT JOIN datos_l dl ON cb.SUBSIDIARIA = dl.SUBSIDIARIA;
+
+
+--216
+WITH fecha_anterior AS (
+    SELECT MAX(FECHA_DATOS) as FECHA_ANTERIOR
+    FROM SALIDAS 
+    WHERE FECHA_DATOS < 'tu_fecha_actual'
+),
+datos_m AS (
+    -- M = 10950_t (fecha actual)
+    SELECT 
+        SUBSIDIARIA,
+        SUM(MONTO) as MONTO_M
+    FROM SALIDAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
+        AND CONCEPTO = '10950'
+    GROUP BY SUBSIDIARIA
+),
+datos_n AS (
+    -- N = Abs(Min[(10920+10930)_t - (10900)_t-1, 0])
+    SELECT 
+        s_actual.SUBSIDIARIA,
+        ABS(MIN(COALESCE(s_actual.SUMA_ACTUAL, 0) - COALESCE(s_anterior.MONTO_ANTERIOR, 0), 0)) as MONTO_N
+    FROM (
+        -- (10920+10930)_t (fecha actual)
+        SELECT 
+            SUBSIDIARIA,
+            SUM(MONTO) as SUMA_ACTUAL
+        FROM SALIDAS
+        WHERE FECHA_DATOS = 'tu_fecha_actual'
+            AND CONCEPTO IN ('10920', '10930')
+        GROUP BY SUBSIDIARIA
+    ) s_actual
+    LEFT JOIN (
+        -- (10900)_t-1 (fecha anterior)
+        SELECT 
+            SUBSIDIARIA,
+            SUM(MONTO) as MONTO_ANTERIOR
+        FROM SALIDAS
+        WHERE FECHA_DATOS = (SELECT FECHA_ANTERIOR FROM fecha_anterior)
+            AND CONCEPTO = '10900'
+        GROUP BY SUBSIDIARIA
+    ) s_anterior ON s_actual.SUBSIDIARIA = s_anterior.SUBSIDIARIA
+),
+combinacion_base AS (
+    SELECT DISTINCT SUBSIDIARIA 
+    FROM SALIDAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
+)
+SELECT 
+    'tu_fecha_actual' AS FECHA_DATOS,
+    (SELECT FECHA_ANTERIOR FROM fecha_anterior) AS FECHA_ANTERIOR,
+    cb.SUBSIDIARIA,
+    '10950' AS CONCEPTO_M,
+    COALESCE(dm.MONTO_M, 0) AS MONTO_M,
+    'Abs(Min[(10920+10930)_t - (10900)_t-1, 0])' AS CONCEPTO_N,
+    COALESCE(dn.MONTO_N, 0) AS MONTO_N,
+    CASE 
+        WHEN COALESCE(dm.MONTO_M, 0) BETWEEN 
+            COALESCE(dn.MONTO_N, 0) * 0.99 AND COALESCE(dn.MONTO_N, 0) * 1.01
+        THEN 1  -- ✅ Cumple (M está dentro de ±1% de N)
+        ELSE 2   -- ❌ No cumple
+    END AS RESULTADO
+FROM combinacion_base cb
+LEFT JOIN datos_m dm ON cb.SUBSIDIARIA = dm.SUBSIDIARIA
+LEFT JOIN datos_n dn ON cb.SUBSIDIARIA = dn.SUBSIDIARIA;
