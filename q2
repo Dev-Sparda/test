@@ -88,7 +88,12 @@ datos_n AS (
     -- N = Abs(Min[(10920+10930)_t - (10900)_t-1, 0])
     SELECT 
         s_actual.SUBSIDIARIA,
-        ABS(MIN(COALESCE(s_actual.SUMA_ACTUAL, 0) - COALESCE(s_anterior.MONTO_ANTERIOR, 0), 0)) as MONTO_N
+        ABS(
+            CASE WHEN (COALESCE(s_actual.SUMA_ACTUAL, 0) - COALESCE(s_anterior.MONTO_ANTERIOR, 0)) < 0 
+                 THEN (COALESCE(s_actual.SUMA_ACTUAL, 0) - COALESCE(s_anterior.MONTO_ANTERIOR, 0))
+                 ELSE 0 
+            END
+        ) as MONTO_N
     FROM (
         -- (10920+10930)_t (fecha actual)
         SELECT 
@@ -123,6 +128,21 @@ SELECT
     COALESCE(dm.MONTO_M, 0) AS MONTO_M,
     'Abs(Min[(10920+10930)_t - (10900)_t-1, 0])' AS CONCEPTO_N,
     COALESCE(dn.MONTO_N, 0) AS MONTO_N,
+    -- Para debugging, mostramos también los componentes:
+    (SELECT SUMA_ACTUAL FROM (
+        SELECT SUBSIDIARIA, SUM(MONTO) as SUMA_ACTUAL
+        FROM SALIDAS
+        WHERE FECHA_DATOS = 'tu_fecha_actual'
+            AND CONCEPTO IN ('10920', '10930')
+        GROUP BY SUBSIDIARIA
+    ) WHERE SUBSIDIARIA = cb.SUBSIDIARIA) AS SUMA_10920_10930,
+    (SELECT MONTO_ANTERIOR FROM (
+        SELECT SUBSIDIARIA, SUM(MONTO) as MONTO_ANTERIOR
+        FROM SALIDAS
+        WHERE FECHA_DATOS = (SELECT FECHA_ANTERIOR FROM fecha_anterior)
+            AND CONCEPTO = '10900'
+        GROUP BY SUBSIDIARIA
+    ) WHERE SUBSIDIARIA = cb.SUBSIDIARIA) AS MONTO_10900_ANTERIOR,
     CASE 
         WHEN COALESCE(dm.MONTO_M, 0) BETWEEN 
             COALESCE(dn.MONTO_N, 0) * 0.99 AND COALESCE(dn.MONTO_N, 0) * 1.01
