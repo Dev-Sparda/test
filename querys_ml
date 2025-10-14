@@ -487,3 +487,63 @@ SELECT
 FROM combinacion_base cb
 LEFT JOIN datos_as das ON cb.SUBSIDIARIA = das.SUBSIDIARIA
 LEFT JOIN datos_at dat ON cb.SUBSIDIARIA = dat.SUBSIDIARIA;
+
+
+---233---
+WITH fecha_max AS (
+    SELECT MAX(FECHA_DATOS) as FECHA_MAXIMA
+    FROM SALIDAS
+),
+fecha_sig AS (
+    SELECT MIN(FECHA_DATOS) as FECHA_SIGUIENTE
+    FROM SALIDAS
+    WHERE FECHA_DATOS > 'tu_fecha_actual'
+),
+datos_au AS (
+    -- Au = 11050_t (fecha actual)
+    SELECT 
+        SUBSIDIARIA,
+        SUM(MONTO) as MONTO_AU
+    FROM SALIDAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
+        AND CONCEPTO = '11050'
+    GROUP BY SUBSIDIARIA
+),
+datos_av AS (
+    -- Av = 11080_t+1 (fecha siguiente)
+    SELECT 
+        SUBSIDIARIA,
+        SUM(MONTO) as MONTO_AV
+    FROM SALIDAS
+    WHERE FECHA_DATOS = (SELECT FECHA_SIGUIENTE FROM fecha_sig)
+        AND CONCEPTO = '11080'
+    GROUP BY SUBSIDIARIA
+),
+combinacion_base AS (
+    SELECT DISTINCT SUBSIDIARIA 
+    FROM SALIDAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
+)
+SELECT 
+    'tu_fecha_actual' AS FECHA_ACTUAL,
+    (SELECT FECHA_SIGUIENTE FROM fecha_sig) AS FECHA_SIGUIENTE,
+    (SELECT FECHA_MAXIMA FROM fecha_max) AS FECHA_MAXIMA_BASE,
+    cb.SUBSIDIARIA,
+    '11050' AS CONCEPTO_AU,
+    COALESCE(dau.MONTO_AU, 0) AS MONTO_AU,
+    '11080' AS CONCEPTO_AV,
+    COALESCE(dav.MONTO_AV, 0) AS MONTO_AV,
+    CASE 
+        WHEN 'tu_fecha_actual' = (SELECT FECHA_MAXIMA FROM fecha_max) THEN
+            NULL  -- No activar validación
+        WHEN 'tu_fecha_actual' < (SELECT FECHA_MAXIMA FROM fecha_max) THEN
+            CASE 
+                WHEN COALESCE(dau.MONTO_AU, 0) >= COALESCE(dav.MONTO_AV, 0)
+                THEN NULL  -- ✅ No detonar (Au >= Av)
+                ELSE 1     -- ❌ Detonar alerta (Au < Av)
+            END
+        ELSE NULL  -- Por seguridad
+    END AS RESULTADO
+FROM combinacion_base cb
+LEFT JOIN datos_au dau ON cb.SUBSIDIARIA = dau.SUBSIDIARIA
+LEFT JOIN datos_av dav ON cb.SUBSIDIARIA = dav.SUBSIDIARIA;
