@@ -437,3 +437,53 @@ SELECT
 FROM combinacion_base cb
 LEFT JOIN datos_ak dak ON cb.SUBSIDIARIA = dak.SUBSIDIARIA
 LEFT JOIN datos_al dal ON cb.SUBSIDIARIA = dal.SUBSIDIARIA;
+
+
+
+---232--
+WITH fecha_anterior AS (
+    SELECT MAX(FECHA_DATOS) as FECHA_ANTERIOR
+    FROM SALIDAS 
+    WHERE FECHA_DATOS < 'tu_fecha_actual'
+),
+datos_as AS (
+    -- As = 11080_t (fecha actual)
+    SELECT 
+        SUBSIDIARIA,
+        SUM(MONTO) as MONTO_AS
+    FROM SALIDAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
+        AND CONCEPTO = '11080'
+    GROUP BY SUBSIDIARIA
+),
+datos_at AS (
+    -- At = 11050_t-1 (fecha anterior)
+    SELECT 
+        SUBSIDIARIA,
+        SUM(MONTO) as MONTO_AT
+    FROM SALIDAS
+    WHERE FECHA_DATOS = (SELECT FECHA_ANTERIOR FROM fecha_anterior)
+        AND CONCEPTO = '11050'
+    GROUP BY SUBSIDIARIA
+),
+combinacion_base AS (
+    SELECT DISTINCT SUBSIDIARIA 
+    FROM SALIDAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
+)
+SELECT 
+    'tu_fecha_actual' AS FECHA_DATOS,
+    (SELECT FECHA_ANTERIOR FROM fecha_anterior) AS FECHA_ANTERIOR,
+    cb.SUBSIDIARIA,
+    '11080' AS CONCEPTO_AS,
+    COALESCE(das.MONTO_AS, 0) AS MONTO_AS,
+    '11050' AS CONCEPTO_AT,
+    COALESCE(dat.MONTO_AT, 0) AS MONTO_AT,
+    CASE 
+        WHEN COALESCE(das.MONTO_AS, 0) <= COALESCE(dat.MONTO_AT, 0)
+        THEN 1  -- ✅ Cumple (As <= At)
+        ELSE 2   -- ❌ No cumple (As > At)
+    END AS RESULTADO
+FROM combinacion_base cb
+LEFT JOIN datos_as das ON cb.SUBSIDIARIA = das.SUBSIDIARIA
+LEFT JOIN datos_at dat ON cb.SUBSIDIARIA = dat.SUBSIDIARIA;
