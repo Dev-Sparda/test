@@ -1379,7 +1379,7 @@ datos_ch AS (
         WHERE FECHA_DATOS = (SELECT FECHA_SIGUIENTE_30 FROM fecha_sig_30)
             AND CONCEPTO IN ('11170', '11180')
         GROUP BY SUBSIDIARIA
-    ) s_siguiente_otros ON s_siguiente.SUBSIDIARIA = s_siguiente_others.SUBSIDIARIA
+    ) s_siguiente_otros ON s_siguiente.SUBSIDIARIA = s_siguiente_otros.SUBSIDIARIA
 ),
 combinacion_base AS (
     SELECT DISTINCT SUBSIDIARIA 
