@@ -618,7 +618,7 @@ LEFT JOIN datos_aw daw ON cb.SUBSIDIARIA = daw.SUBSIDIARIA
 LEFT JOIN datos_ax dax ON cb.SUBSIDIARIA = dax.SUBSIDIARIA;
 
 
----235---
+---235---soluciones null como true
 WITH fecha_anterior AS (
     SELECT MAX(FECHA_DATOS) as FECHA_ANTERIOR
     FROM SALIDAS 
@@ -638,12 +638,15 @@ datos_az AS (
     -- Az = Abs(Min[(11070+11080)_t - (11050)_t-1, 0])
     SELECT 
         s_actual.SUBSIDIARIA,
-        ABS(
-            CASE WHEN (COALESCE(s_actual.SUMA_ACTUAL, 0) - COALESCE(s_anterior.MONTO_ANTERIOR, 0)) < 0 
-                 THEN (COALESCE(s_actual.SUMA_ACTUAL, 0) - COALESCE(s_anterior.MONTO_ANTERIOR, 0))
-                 ELSE 0 
-            END
-        ) as MONTO_AZ
+        CASE 
+            WHEN s_anterior.MONTO_ANTERIOR IS NULL THEN NULL
+            ELSE ABS(
+                CASE WHEN (COALESCE(s_actual.SUMA_ACTUAL, 0) - s_anterior.MONTO_ANTERIOR) < 0 
+                     THEN (COALESCE(s_actual.SUMA_ACTUAL, 0) - s_anterior.MONTO_ANTERIOR)
+                     ELSE 0 
+                END
+            )
+        END as MONTO_AZ
     FROM (
         -- (11070+11080)_t (fecha actual)
         SELECT 
@@ -675,12 +678,12 @@ SELECT
     (SELECT FECHA_ANTERIOR FROM fecha_anterior) AS FECHA_ANTERIOR,
     cb.SUBSIDIARIA,
     '11100' AS CONCEPTO_AY,
-    COALESCE(day.MONTO_AY, 0) AS MONTO_AY,
+    day.MONTO_AY,
     'Abs(Min[(11070+11080)_t - (11050)_t-1, 0])' AS CONCEPTO_AZ,
-    COALESCE(daz.MONTO_AZ, 0) AS MONTO_AZ,
+    daz.MONTO_AZ,
     CASE 
-        WHEN COALESCE(day.MONTO_AY, 0) BETWEEN 
-            COALESCE(daz.MONTO_AZ, 0) * 0.99 AND COALESCE(daz.MONTO_AZ, 0) * 1.01
+        WHEN day.MONTO_AY IS NULL OR daz.MONTO_AZ IS NULL THEN 2  -- ❌ No cumple (algún concepto es NULL)
+        WHEN day.MONTO_AY BETWEEN daz.MONTO_AZ * 0.99 AND daz.MONTO_AZ * 1.01
         THEN 1  -- ✅ Cumple (Ay está dentro de ±1% de Az)
         ELSE 2   -- ❌ No cumple
     END AS RESULTADO
