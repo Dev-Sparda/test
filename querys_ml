@@ -924,3 +924,74 @@ SELECT
 FROM combinacion_base cb
 LEFT JOIN datos_bq dbq ON cb.SUBSIDIARIA = dbq.SUBSIDIARIA
 LEFT JOIN datos_br dbr ON cb.SUBSIDIARIA = dbr.SUBSIDIARIA;
+
+--245--
+WITH fecha_anterior_30 AS (
+    SELECT DATE('tu_fecha_actual', '-30 days') AS FECHA_ANTERIOR_30
+),
+datos_bs AS (
+    -- Bs = 11180_t (fecha actual)
+    SELECT 
+        SUBSIDIARIA,
+        SUM(MONTO) as MONTO_BS
+    FROM SALIDAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
+        AND CONCEPTO = '11180'
+    GROUP BY SUBSIDIARIA
+),
+datos_bt AS (
+    -- Bt = Abs(Min[(11121-11122)_t - (11121-11122)_t-30, 0])
+    SELECT 
+        s_actual.SUBSIDIARIA,
+        ABS(
+            CASE WHEN ((s_actual.DIFERENCIA_ACTUAL - COALESCE(s_anterior.DIFERENCIA_ANTERIOR, 0)) < 0)
+                 THEN (s_actual.DIFERENCIA_ACTUAL - COALESCE(s_anterior.DIFERENCIA_ANTERIOR, 0))
+                 ELSE 0 
+            END
+        ) as MONTO_BT
+    FROM (
+        -- (11121-11122)_t (fecha actual)
+        SELECT 
+            SUBSIDIARIA,
+            (SUM(CASE WHEN CONCEPTO = '11121' THEN MONTO ELSE 0 END) - 
+             SUM(CASE WHEN CONCEPTO = '11122' THEN MONTO ELSE 0 END)) as DIFERENCIA_ACTUAL
+        FROM SALIDAS
+        WHERE FECHA_DATOS = 'tu_fecha_actual'
+            AND CONCEPTO IN ('11121', '11122')
+        GROUP BY SUBSIDIARIA
+    ) s_actual
+    LEFT JOIN (
+        -- (11121-11122)_t-30 (30 días antes)
+        SELECT 
+            SUBSIDIARIA,
+            (SUM(CASE WHEN CONCEPTO = '11121' THEN MONTO ELSE 0 END) - 
+             SUM(CASE WHEN CONCEPTO = '11122' THEN MONTO ELSE 0 END)) as DIFERENCIA_ANTERIOR
+        FROM SALIDAS
+        WHERE FECHA_DATOS = (SELECT FECHA_ANTERIOR_30 FROM fecha_anterior_30)
+            AND CONCEPTO IN ('11121', '11122')
+        GROUP BY SUBSIDIARIA
+    ) s_anterior ON s_actual.SUBSIDIARIA = s_anterior.SUBSIDIARIA
+),
+combinacion_base AS (
+    SELECT DISTINCT SUBSIDIARIA 
+    FROM SALIDAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
+)
+SELECT 
+    'tu_fecha_actual' AS FECHA_DATOS,
+    (SELECT FECHA_ANTERIOR_30 FROM fecha_anterior_30) AS FECHA_ANTERIOR_30,
+    cb.SUBSIDIARIA,
+    '11180' AS CONCEPTO_BS,
+    COALESCE(dbs.MONTO_BS, 0) AS MONTO_BS,
+    'Abs(Min[(11121-11122)_t - (11121-11122)_t-30, 0])' AS CONCEPTO_BT,
+    COALESCE(dbt.MONTO_BT, 0) AS MONTO_BT,
+    CASE 
+        WHEN dbs.MONTO_BS IS NULL OR dbt.MONTO_BT IS NULL THEN NULL  -- ✅ No hay datos
+        WHEN COALESCE(dbs.MONTO_BS, 0) BETWEEN 
+            COALESCE(dbt.MONTO_BT, 0) * 0.99 AND COALESCE(dbt.MONTO_BT, 0) * 1.01
+        THEN 1  -- ✅ Cumple (Bs está dentro de ±1% de Bt)
+        ELSE 2   -- ❌ No cumple
+    END AS RESULTADO
+FROM combinacion_base cb
+LEFT JOIN datos_bs dbs ON cb.SUBSIDIARIA = dbs.SUBSIDIARIA
+LEFT JOIN datos_bt dbt ON cb.SUBSIDIARIA = dbt.SUBSIDIARIA;
