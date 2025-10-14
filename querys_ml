@@ -616,3 +616,74 @@ SELECT
 FROM combinacion_base cb
 LEFT JOIN datos_aw daw ON cb.SUBSIDIARIA = daw.SUBSIDIARIA
 LEFT JOIN datos_ax dax ON cb.SUBSIDIARIA = dax.SUBSIDIARIA;
+
+
+---235---
+WITH fecha_anterior AS (
+    SELECT MAX(FECHA_DATOS) as FECHA_ANTERIOR
+    FROM SALIDAS 
+    WHERE FECHA_DATOS < 'tu_fecha_actual'
+),
+datos_ay AS (
+    -- Ay = 11100_t (fecha actual)
+    SELECT 
+        SUBSIDIARIA,
+        SUM(MONTO) as MONTO_AY
+    FROM SALIDAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
+        AND CONCEPTO = '11100'
+    GROUP BY SUBSIDIARIA
+),
+datos_az AS (
+    -- Az = Abs(Min[(11070+11080)_t - (11050)_t-1, 0])
+    SELECT 
+        s_actual.SUBSIDIARIA,
+        ABS(
+            CASE WHEN (COALESCE(s_actual.SUMA_ACTUAL, 0) - COALESCE(s_anterior.MONTO_ANTERIOR, 0)) < 0 
+                 THEN (COALESCE(s_actual.SUMA_ACTUAL, 0) - COALESCE(s_anterior.MONTO_ANTERIOR, 0))
+                 ELSE 0 
+            END
+        ) as MONTO_AZ
+    FROM (
+        -- (11070+11080)_t (fecha actual)
+        SELECT 
+            SUBSIDIARIA,
+            SUM(MONTO) as SUMA_ACTUAL
+        FROM SALIDAS
+        WHERE FECHA_DATOS = 'tu_fecha_actual'
+            AND CONCEPTO IN ('11070', '11080')
+        GROUP BY SUBSIDIARIA
+    ) s_actual
+    LEFT JOIN (
+        -- (11050)_t-1 (fecha anterior)
+        SELECT 
+            SUBSIDIARIA,
+            SUM(MONTO) as MONTO_ANTERIOR
+        FROM SALIDAS
+        WHERE FECHA_DATOS = (SELECT FECHA_ANTERIOR FROM fecha_anterior)
+            AND CONCEPTO = '11050'
+        GROUP BY SUBSIDIARIA
+    ) s_anterior ON s_actual.SUBSIDIARIA = s_anterior.SUBSIDIARIA
+),
+combinacion_base AS (
+    SELECT DISTINCT SUBSIDIARIA 
+    FROM SALIDAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
+)
+SELECT 
+    'tu_fecha_actual' AS FECHA_DATOS,
+    (SELECT FECHA_ANTERIOR FROM fecha_anterior) AS FECHA_ANTERIOR,
+    cb.SUBSIDIARIA,
+    '11100' AS CONCEPTO_AY,
+    COALESCE(day.MONTO_AY, 0) AS MONTO_AY,
+    'Abs(Min[(11070+11080)_t - (11050)_t-1, 0])' AS CONCEPTO_AZ,
+    COALESCE(daz.MONTO_AZ, 0) AS MONTO_AZ,
+    CASE 
+        WHEN COALESCE(day.MONTO_AY, 0) BETWEEN 
+            COALESCE(daz.MONTO_AZ, 0) * 0.99 AND COALESCE(daz.MONTO_AZ, 0) * 1.01
+        THEN 1  -- ✅ Cumple (Ay está dentro de ±1% de Az)
+        ELSE 2   -- ❌ No cumple
+    END AS RESULTADO
+FROM combinacion_base cb
+LEFT JOIN datos_ay day ON cb.SUBSIDIARIA = day.SUBSIDIARIA
+LEFT JOIN datos_az daz ON cb.SUBSIDIARIA = daz.SUBSIDIARIA;
