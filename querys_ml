@@ -771,3 +771,85 @@ SELECT
 FROM combinacion_base cb
 LEFT JOIN datos_ba dba ON cb.SUBSIDIARIA = dba.SUBSIDIARIA
 LEFT JOIN datos_bb dbb ON cb.SUBSIDIARIA = dbb.SUBSIDIARIA;
+
+
+--237--
+WITH fecha_max AS (
+    SELECT MAX(FECHA_DATOS) as FECHA_MAXIMA
+    FROM SALIDAS
+),
+fecha_sig AS (
+    SELECT MIN(FECHA_DATOS) as FECHA_SIGUIENTE
+    FROM SALIDAS
+    WHERE FECHA_DATOS > 'tu_fecha_actual'
+),
+datos_bc AS (
+    -- Bc = 11100_t+1 (fecha siguiente)
+    SELECT 
+        SUBSIDIARIA,
+        SUM(MONTO) as MONTO_BC
+    FROM SALIDAS
+    WHERE FECHA_DATOS = (SELECT FECHA_SIGUIENTE FROM fecha_sig)
+        AND CONCEPTO = '11100'
+    GROUP BY SUBSIDIARIA
+),
+datos_bd AS (
+    -- Bd = Abs(Min[(11070+11080)_t+1 - (11050)_t, 0])
+    SELECT 
+        s_siguiente.SUBSIDIARIA,
+        ABS(
+            CASE WHEN (COALESCE(s_siguiente.SUMA_SIGUIENTE, 0) - COALESCE(s_actual.MONTO_ACTUAL, 0)) < 0 
+                 THEN (COALESCE(s_siguiente.SUMA_SIGUIENTE, 0) - COALESCE(s_actual.MONTO_ACTUAL, 0))
+                 ELSE 0 
+            END
+        ) as MONTO_BD
+    FROM (
+        -- (11070+11080)_t+1 (fecha siguiente)
+        SELECT 
+            SUBSIDIARIA,
+            SUM(MONTO) as SUMA_SIGUIENTE
+        FROM SALIDAS
+        WHERE FECHA_DATOS = (SELECT FECHA_SIGUIENTE FROM fecha_sig)
+            AND CONCEPTO IN ('11070', '11080')
+        GROUP BY SUBSIDIARIA
+    ) s_siguiente
+    LEFT JOIN (
+        -- (11050)_t (fecha actual)
+        SELECT 
+            SUBSIDIARIA,
+            SUM(MONTO) as MONTO_ACTUAL
+        FROM SALIDAS
+        WHERE FECHA_DATOS = 'tu_fecha_actual'
+            AND CONCEPTO = '11050'
+        GROUP BY SUBSIDIARIA
+    ) s_actual ON s_siguiente.SUBSIDIARIA = s_actual.SUBSIDIARIA
+),
+combinacion_base AS (
+    SELECT DISTINCT SUBSIDIARIA 
+    FROM SALIDAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
+)
+SELECT 
+    'tu_fecha_actual' AS FECHA_ACTUAL,
+    (SELECT FECHA_SIGUIENTE FROM fecha_sig) AS FECHA_SIGUIENTE,
+    (SELECT FECHA_MAXIMA FROM fecha_max) AS FECHA_MAXIMA_BASE,
+    cb.SUBSIDIARIA,
+    '11100' AS CONCEPTO_BC,
+    COALESCE(dbc.MONTO_BC, 0) AS MONTO_BC,
+    'Abs(Min[(11070+11080)_t+1 - (11050)_t, 0])' AS CONCEPTO_BD,
+    COALESCE(dbd.MONTO_BD, 0) AS MONTO_BD,
+    CASE 
+        WHEN 'tu_fecha_actual' = (SELECT FECHA_MAXIMA FROM fecha_max) THEN
+            NULL  -- No activar validación
+        WHEN 'tu_fecha_actual' < (SELECT FECHA_MAXIMA FROM fecha_max) THEN
+            CASE 
+                WHEN COALESCE(dbc.MONTO_BC, 0) BETWEEN 
+                    COALESCE(dbd.MONTO_BD, 0) * 0.99 AND COALESCE(dbd.MONTO_BD, 0) * 1.01
+                THEN NULL  -- ✅ No detonar (Bc = Bd dentro de tolerancia)
+                ELSE 1     -- ❌ Detonar alerta (Bc ≠ Bd)
+            END
+        ELSE NULL  -- Por seguridad
+    END AS RESULTADO
+FROM combinacion_base cb
+LEFT JOIN datos_bc dbc ON cb.SUBSIDIARIA = dbc.SUBSIDIARIA
+LEFT JOIN datos_bd dbd ON cb.SUBSIDIARIA = dbd.SUBSIDIARIA;
