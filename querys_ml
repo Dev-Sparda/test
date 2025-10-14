@@ -1318,3 +1318,93 @@ SELECT
 FROM combinacion_base cb
 LEFT JOIN datos_ce dce ON cb.SUBSIDIARIA = dce.SUBSIDIARIA
 LEFT JOIN datos_cf dcf ON cb.SUBSIDIARIA = dcf.SUBSIDIARIA;
+
+
+--250--
+WITH fecha_max AS (
+    SELECT MAX(FECHA_DATOS) as FECHA_MAXIMA
+    FROM SALIDAS
+),
+fecha_sig_30 AS (
+    SELECT DATE('{FD}', '+30 days') AS FECHA_SIGUIENTE_30
+),
+datos_cg AS (
+    -- Cg = 11190_t+30 (30 días después)
+    SELECT 
+        SUBSIDIARIA,
+        SUM(MONTO) as MONTO_CG
+    FROM SALIDAS
+    WHERE FECHA_DATOS = (SELECT FECHA_SIGUIENTE_30 FROM fecha_sig_30)
+        AND CONCEPTO = '11190'
+    GROUP BY SUBSIDIARIA
+),
+datos_ch AS (
+    -- Ch = Max[(11150-11160)_t+30 - (11150-11160)_t - (11170-11180)_t+30, 0]
+    SELECT 
+        s_siguiente.SUBSIDIARIA,
+        CASE 
+            WHEN ((s_siguiente.DIF_11150_11160_SIG - COALESCE(s_actual.DIF_11150_11160_ACTUAL, 0) - COALESCE(s_siguiente_otros.DIF_11170_11180_SIG, 0)) > 0)
+            THEN (s_siguiente.DIF_11150_11160_SIG - COALESCE(s_actual.DIF_11150_11160_ACTUAL, 0) - COALESCE(s_siguiente_otros.DIF_11170_11180_SIG, 0))
+            ELSE 0 
+        END as MONTO_CH
+    FROM (
+        -- (11150-11160)_t+30 (30 días después)
+        SELECT 
+            SUBSIDIARIA,
+            (SUM(CASE WHEN CONCEPTO = '11150' THEN MONTO ELSE 0 END) - 
+             SUM(CASE WHEN CONCEPTO = '11160' THEN MONTO ELSE 0 END)) as DIF_11150_11160_SIG
+        FROM SALIDAS
+        WHERE FECHA_DATOS = (SELECT FECHA_SIGUIENTE_30 FROM fecha_sig_30)
+            AND CONCEPTO IN ('11150', '11160')
+        GROUP BY SUBSIDIARIA
+    ) s_siguiente
+    LEFT JOIN (
+        -- (11150-11160)_t (fecha actual)
+        SELECT 
+            SUBSIDIARIA,
+            (SUM(CASE WHEN CONCEPTO = '11150' THEN MONTO ELSE 0 END) - 
+             SUM(CASE WHEN CONCEPTO = '11160' THEN MONTO ELSE 0 END)) as DIF_11150_11160_ACTUAL
+        FROM SALIDAS
+        WHERE FECHA_DATOS = '{FD}'
+            AND CONCEPTO IN ('11150', '11160')
+        GROUP BY SUBSIDIARIA
+    ) s_actual ON s_siguiente.SUBSIDIARIA = s_actual.SUBSIDIARIA
+    LEFT JOIN (
+        -- (11170-11180)_t+30 (30 días después)
+        SELECT 
+            SUBSIDIARIA,
+            (SUM(CASE WHEN CONCEPTO = '11170' THEN MONTO ELSE 0 END) - 
+             SUM(CASE WHEN CONCEPTO = '11180' THEN MONTO ELSE 0 END)) as DIF_11170_11180_SIG
+        FROM SALIDAS
+        WHERE FECHA_DATOS = (SELECT FECHA_SIGUIENTE_30 FROM fecha_sig_30)
+            AND CONCEPTO IN ('11170', '11180')
+        GROUP BY SUBSIDIARIA
+    ) s_siguiente_otros ON s_siguiente.SUBSIDIARIA = s_siguiente_others.SUBSIDIARIA
+),
+combinacion_base AS (
+    SELECT DISTINCT SUBSIDIARIA 
+    FROM SALIDAS
+    WHERE FECHA_DATOS = '{FD}'
+)
+SELECT 
+    '{FD}' AS FECHA_ACTUAL,
+    (SELECT FECHA_SIGUIENTE_30 FROM fecha_sig_30) AS FECHA_SIGUIENTE_30,
+    (SELECT FECHA_MAXIMA FROM fecha_max) AS FECHA_MAXIMA_BASE,
+    (SELECT DATE(FECHA_MAXIMA, '-30 days') FROM fecha_max) AS FECHA_MAXIMA_MENOS_30,
+    cb.SUBSIDIARIA,
+    '11190' AS CONCEPTO_CG,
+    COALESCE(dcg.MONTO_CG, 0) AS MONTO_CG,
+    'Max[(11150-11160)_t+30 - (11150-11160)_t - (11170-11180)_t+30, 0]' AS CONCEPTO_CH,
+    COALESCE(dch.MONTO_CH, 0) AS MONTO_CH,
+    CASE 
+        WHEN '{FD}' > (SELECT DATE(FECHA_MAXIMA, '-30 days') FROM fecha_max) THEN
+            NULL  -- No activar validación (fecha actual es mayor que fecha máxima - 30 días)
+        WHEN dcg.MONTO_CG IS NULL OR dch.MONTO_CH IS NULL THEN NULL  -- No hay datos
+        WHEN COALESCE(dcg.MONTO_CG, 0) BETWEEN 
+            COALESCE(dch.MONTO_CH, 0) * 0.99 AND COALESCE(dch.MONTO_CH, 0) * 1.01
+        THEN NULL  -- ✅ No detonar (Cg = Ch dentro de tolerancia)
+        ELSE 1     -- ❌ Detonar alerta (Cg ≠ Ch)
+    END AS RESULTADO
+FROM combinacion_base cb
+LEFT JOIN datos_cg dcg ON cb.SUBSIDIARIA = dcg.SUBSIDIARIA
+LEFT JOIN datos_ch dch ON cb.SUBSIDIARIA = dch.SUBSIDIARIA;
