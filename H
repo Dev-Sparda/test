@@ -71,3 +71,51 @@ JOIN (
 ) AS h
   ON a.id_cliente = h.id_cliente
 ORDER BY a.id_cliente, h.PERIODO;
+
+
+----V2----
+SELECT
+    p.PERIODO AS PERIODO_492,
+    h.PERIODO AS PERIODO_HISTORICO,
+    p.CRED_CNBV,
+    p.NUM_CRED_INST,
+    p.CREDITO,
+    p.CREDITO2,
+    h.TIPO_ALTA,
+    p.IDE_ACRE_IN AS IDE_ACRE_IN_492,
+    p.NOM_ACRE AS NOM_ACRE_492,
+    p.RFC_ACRE AS RFC_ACRE_492,
+    h.IDE_ACRE_IN AS IDE_ACRE_IN_HIST,
+    h.NOM_ACRE AS NOM_ACRE_HIST,
+    h.RFC AS RFC_HIST,
+    CASE 
+        WHEN (p.IDE_ACRE_IN = h.IDE_ACRE_IN) 
+             OR (p.IDE_ACRE_IN IS NULL AND h.IDE_ACRE_IN IS NULL) 
+        THEN 'NO' 
+        ELSE 'SI' 
+    END AS CAMBIO_IDE_ACRE,
+    CASE 
+        WHEN (p.NOM_ACRE = h.NOM_ACRE) 
+             OR (p.NOM_ACRE IS NULL AND h.NOM_ACRE IS NULL) 
+        THEN 'NO' 
+        ELSE 'SI' 
+    END AS CAMBIO_NOM_ACRE,
+    CASE 
+        WHEN (p.RFC_ACRE = h.RFC) 
+             OR (p.RFC_ACRE IS NULL AND h.RFC IS NULL) 
+        THEN 'NO' 
+        ELSE 'SI' 
+    END AS CAMBIO_RFC
+FROM
+    R04H_0492_PASO p
+JOIN
+    HISTORICO_H h
+    ON p.CRED_CNBV = h.CRED_CNBV
+    AND p.NUM_CRED_INST = h.NUM_CREDITO
+WHERE
+    -- Solo traer registros donde al menos un campo haya cambiado
+    NOT (
+        (p.IDE_ACRE_IN = h.IDE_ACRE_IN OR (p.IDE_ACRE_IN IS NULL AND h.IDE_ACRE_IN IS NULL))
+        AND (p.NOM_ACRE = h.NOM_ACRE OR (p.NOM_ACRE IS NULL AND h.NOM_ACRE IS NULL))
+        AND (p.RFC_ACRE = h.RFC OR (p.RFC_ACRE IS NULL AND h.RFC IS NULL))
+    );
