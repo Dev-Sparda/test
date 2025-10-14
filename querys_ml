@@ -995,3 +995,80 @@ SELECT
 FROM combinacion_base cb
 LEFT JOIN datos_bs dbs ON cb.SUBSIDIARIA = dbs.SUBSIDIARIA
 LEFT JOIN datos_bt dbt ON cb.SUBSIDIARIA = dbt.SUBSIDIARIA;
+
+--246--
+WITH fecha_max AS (
+    SELECT MAX(FECHA_DATOS) as FECHA_MAXIMA
+    FROM SALIDAS
+),
+fecha_sig_30 AS (
+    SELECT DATE('tu_fecha_actual', '+30 days') AS FECHA_SIGUIENTE_30
+),
+datos_bu AS (
+    -- Bu = 11170_t+30 (30 días después)
+    SELECT 
+        SUBSIDIARIA,
+        SUM(MONTO) as MONTO_BU
+    FROM SALIDAS
+    WHERE FECHA_DATOS = (SELECT FECHA_SIGUIENTE_30 FROM fecha_sig_30)
+        AND CONCEPTO = '11170'
+    GROUP BY SUBSIDIARIA
+),
+datos_bv AS (
+    -- Bv = Max[(11121-11122)_t+30 - (11121-11122)_t, 0]
+    SELECT 
+        s_siguiente.SUBSIDIARIA,
+        CASE 
+            WHEN ((s_siguiente.DIFERENCIA_SIGUIENTE - COALESCE(s_actual.DIFERENCIA_ACTUAL, 0)) > 0)
+            THEN (s_siguiente.DIFERENCIA_SIGUIENTE - COALESCE(s_actual.DIFERENCIA_ACTUAL, 0))
+            ELSE 0 
+        END as MONTO_BV
+    FROM (
+        -- (11121-11122)_t+30 (30 días después)
+        SELECT 
+            SUBSIDIARIA,
+            (SUM(CASE WHEN CONCEPTO = '11121' THEN MONTO ELSE 0 END) - 
+             SUM(CASE WHEN CONCEPTO = '11122' THEN MONTO ELSE 0 END)) as DIFERENCIA_SIGUIENTE
+        FROM SALIDAS
+        WHERE FECHA_DATOS = (SELECT FECHA_SIGUIENTE_30 FROM fecha_sig_30)
+            AND CONCEPTO IN ('11121', '11122')
+        GROUP BY SUBSIDIARIA
+    ) s_siguiente
+    LEFT JOIN (
+        -- (11121-11122)_t (fecha actual)
+        SELECT 
+            SUBSIDIARIA,
+            (SUM(CASE WHEN CONCEPTO = '11121' THEN MONTO ELSE 0 END) - 
+             SUM(CASE WHEN CONCEPTO = '11122' THEN MONTO ELSE 0 END)) as DIFERENCIA_ACTUAL
+        FROM SALIDAS
+        WHERE FECHA_DATOS = 'tu_fecha_actual'
+            AND CONCEPTO IN ('11121', '11122')
+        GROUP BY SUBSIDIARIA
+    ) s_actual ON s_siguiente.SUBSIDIARIA = s_actual.SUBSIDIARIA
+),
+combinacion_base AS (
+    SELECT DISTINCT SUBSIDIARIA 
+    FROM SALIDAS
+    WHERE FECHA_DATOS = 'tu_fecha_actual'
+)
+SELECT 
+    'tu_fecha_actual' AS FECHA_ACTUAL,
+    (SELECT FECHA_SIGUIENTE_30 FROM fecha_sig_30) AS FECHA_SIGUIENTE_30,
+    (SELECT FECHA_MAXIMA FROM fecha_max) AS FECHA_MAXIMA_BASE,
+    cb.SUBSIDIARIA,
+    '11170' AS CONCEPTO_BU,
+    COALESCE(dbu.MONTO_BU, 0) AS MONTO_BU,
+    'Max[(11121-11122)_t+30 - (11121-11122)_t, 0]' AS CONCEPTO_BV,
+    COALESCE(dbv.MONTO_BV, 0) AS MONTO_BV,
+    CASE 
+        WHEN JULIANDAY((SELECT FECHA_MAXIMA FROM fecha_max)) - JULIANDAY('tu_fecha_actual') < 30 THEN
+            NULL  -- No activar validación (menos de 30 días de diferencia)
+        WHEN dbu.MONTO_BU IS NULL OR dbv.MONTO_BV IS NULL THEN NULL  -- No hay datos
+        WHEN COALESCE(dbu.MONTO_BU, 0) BETWEEN 
+            COALESCE(dbv.MONTO_BV, 0) * 0.99 AND COALESCE(dbv.MONTO_BV, 0) * 1.01
+        THEN NULL  -- ✅ No detonar (Bu = Bv dentro de tolerancia)
+        ELSE 1     -- ❌ Detonar alerta (Bu ≠ Bv)
+    END AS RESULTADO
+FROM combinacion_base cb
+LEFT JOIN datos_bu dbu ON cb.SUBSIDIARIA = dbu.SUBSIDIARIA
+LEFT JOIN datos_bv dbv ON cb.SUBSIDIARIA = dbv.SUBSIDIARIA;
