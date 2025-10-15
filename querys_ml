@@ -1540,13 +1540,18 @@ suma_acumulada AS (
     -- ∑i є [t-30, …, t] (11130-11140)_i (suma acumulada de 30 días)
     SELECT 
         SUBSIDIARIA,
-        SUM(
+        SUM(DIFERENCIA_DIARIA) as SUMA_ACUMULADA_11130_11140
+    FROM (
+        SELECT 
+            SUBSIDIARIA,
+            FECHA_DATOS,
             (SUM(CASE WHEN CONCEPTO = '11130' THEN MONTO ELSE 0 END) - 
-             SUM(CASE WHEN CONCEPTO = '11140' THEN MONTO ELSE 0 END))
-        ) as SUMA_ACUMULADA_11130_11140
-    FROM SALIDAS
-    WHERE FECHA_DATOS IN (SELECT FECHA FROM rango_fechas)
-        AND CONCEPTO IN ('11130', '11140')
+             SUM(CASE WHEN CONCEPTO = '11140' THEN MONTO ELSE 0 END)) as DIFERENCIA_DIARIA
+        FROM SALIDAS
+        WHERE FECHA_DATOS IN (SELECT FECHA FROM rango_fechas)
+            AND CONCEPTO IN ('11130', '11140')
+        GROUP BY SUBSIDIARIA, FECHA_DATOS
+    )
     GROUP BY SUBSIDIARIA
 ),
 datos_cl AS (
