@@ -1498,3 +1498,85 @@ SELECT
 FROM combinacion_base cb
 LEFT JOIN datos_ci dci ON cb.SUBSIDIARIA = dci.SUBSIDIARIA
 LEFT JOIN datos_cj dcj ON cb.SUBSIDIARIA = dcj.SUBSIDIARIA;
+
+--252--
+WITH rango_fechas AS (
+    SELECT DATE('{FD}', '-' || (seq-1) || ' days') AS FECHA
+    FROM (
+        SELECT seq
+        FROM (
+            SELECT 1 AS seq UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION
+            SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9 UNION SELECT 10 UNION
+            SELECT 11 UNION SELECT 12 UNION SELECT 13 UNION SELECT 14 UNION SELECT 15 UNION
+            SELECT 16 UNION SELECT 17 UNION SELECT 18 UNION SELECT 19 UNION SELECT 20 UNION
+            SELECT 21 UNION SELECT 22 UNION SELECT 23 UNION SELECT 24 UNION SELECT 25 UNION
+            SELECT 26 UNION SELECT 27 UNION SELECT 28 UNION SELECT 29 UNION SELECT 30
+        )
+    )
+    WHERE FECHA <= '{FD}'
+),
+datos_ck AS (
+    -- Ck = 11210_t (fecha actual)
+    SELECT 
+        SUBSIDIARIA,
+        SUM(MONTO) as MONTO_CK
+    FROM SALIDAS
+    WHERE FECHA_DATOS = '{FD}'
+        AND CONCEPTO = '11210'
+    GROUP BY SUBSIDIARIA
+),
+datos_cl AS (
+    -- Cl = Abs[(11190-11200)_t + ∑i є [t-30, …, t] (11130-11140)_i]
+    SELECT 
+        COALESCE(dif_actual.SUBSIDIARIA, suma_acumulada.SUBSIDIARIA) AS SUBSIDIARIA,
+        ABS(
+            COALESCE(dif_actual.DIF_11190_11200, 0) + COALESCE(suma_acumulada.SUMA_ACUMULADA_11130_11140, 0)
+        ) as MONTO_CL
+    FROM (
+        -- (11190-11200)_t (fecha actual)
+        SELECT 
+            SUBSIDIARIA,
+            (SUM(CASE WHEN CONCEPTO = '11190' THEN MONTO ELSE 0 END) - 
+             SUM(CASE WHEN CONCEPTO = '11200' THEN MONTO ELSE 0 END)) as DIF_11190_11200
+        FROM SALIDAS
+        WHERE FECHA_DATOS = '{FD}'
+            AND CONCEPTO IN ('11190', '11200')
+        GROUP BY SUBSIDIARIA
+    ) dif_actual
+    FULL OUTER JOIN (
+        -- ∑i є [t-30, …, t] (11130-11140)_i (suma acumulada de 30 días)
+        SELECT 
+            SUBSIDIARIA,
+            SUM(
+                (SUM(CASE WHEN CONCEPTO = '11130' THEN MONTO ELSE 0 END) - 
+                 SUM(CASE WHEN CONCEPTO = '11140' THEN MONTO ELSE 0 END))
+            ) as SUMA_ACUMULADA_11130_11140
+        FROM SALIDAS
+        WHERE FECHA_DATOS IN (SELECT FECHA FROM rango_fechas)
+            AND CONCEPTO IN ('11130', '11140')
+        GROUP BY SUBSIDIARIA
+    ) suma_acumulada ON dif_actual.SUBSIDIARIA = suma_acumulada.SUBSIDIARIA
+),
+combinacion_base AS (
+    SELECT DISTINCT SUBSIDIARIA 
+    FROM SALIDAS
+    WHERE FECHA_DATOS = '{FD}'
+)
+SELECT 
+    '{FD}' AS FECHA_DATOS,
+    (SELECT MIN(FECHA) FROM rango_fechas) AS FECHA_INICIO_30_DIAS,
+    cb.SUBSIDIARIA,
+    '11210' AS CONCEPTO_CK,
+    COALESCE(dck.MONTO_CK, 0) AS MONTO_CK,
+    'Abs[(11190-11200)_t + ∑[t-30,t] (11130-11140)_i]' AS CONCEPTO_CL,
+    COALESCE(dcl.MONTO_CL, 0) AS MONTO_CL,
+    CASE 
+        WHEN dck.MONTO_CK IS NULL OR dcl.MONTO_CL IS NULL THEN NULL  -- No hay datos
+        WHEN COALESCE(dck.MONTO_CK, 0) BETWEEN 
+            COALESCE(dcl.MONTO_CL, 0) * 0.99 AND COALESCE(dcl.MONTO_CL, 0) * 1.01
+        THEN 1  -- ✅ Cumple (Ck está dentro de ±1% de Cl)
+        ELSE 2   -- ❌ No cumple
+    END AS RESULTADO
+FROM combinacion_base cb
+LEFT JOIN datos_ck dck ON cb.SUBSIDIARIA = dck.SUBSIDIARIA
+LEFT JOIN datos_cl dcl ON cb.SUBSIDIARIA = dcl.SUBSIDIARIA;
