@@ -1557,7 +1557,7 @@ suma_acumulada AS (
 datos_cl AS (
     -- Cl = Abs[(11190-11200)_t + ∑i є [t-30, …, t] (11130-11140)_i]
     SELECT 
-        SUBSIDIARIA,
+        todas_subsidiarias.SUBSIDIARIA,
         ABS(
             COALESCE(da.DIF_11190_11200, 0) + COALESCE(sa.SUMA_ACUMULADA_11130_11140, 0)
         ) as MONTO_CL
