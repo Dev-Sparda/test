@@ -1525,37 +1525,47 @@ datos_ck AS (
         AND CONCEPTO = '11210'
     GROUP BY SUBSIDIARIA
 ),
+dif_actual AS (
+    -- (11190-11200)_t (fecha actual)
+    SELECT 
+        SUBSIDIARIA,
+        (SUM(CASE WHEN CONCEPTO = '11190' THEN MONTO ELSE 0 END) - 
+         SUM(CASE WHEN CONCEPTO = '11200' THEN MONTO ELSE 0 END)) as DIF_11190_11200
+    FROM SALIDAS
+    WHERE FECHA_DATOS = '{FD}'
+        AND CONCEPTO IN ('11190', '11200')
+    GROUP BY SUBSIDIARIA
+),
+suma_acumulada AS (
+    -- ∑i є [t-30, …, t] (11130-11140)_i (suma acumulada de 30 días)
+    SELECT 
+        SUBSIDIARIA,
+        SUM(
+            (SUM(CASE WHEN CONCEPTO = '11130' THEN MONTO ELSE 0 END) - 
+             SUM(CASE WHEN CONCEPTO = '11140' THEN MONTO ELSE 0 END))
+        ) as SUMA_ACUMULADA_11130_11140
+    FROM SALIDAS
+    WHERE FECHA_DATOS IN (SELECT FECHA FROM rango_fechas)
+        AND CONCEPTO IN ('11130', '11140')
+    GROUP BY SUBSIDIARIA
+),
 datos_cl AS (
     -- Cl = Abs[(11190-11200)_t + ∑i є [t-30, …, t] (11130-11140)_i]
     SELECT 
-        COALESCE(dif_actual.SUBSIDIARIA, suma_acumulada.SUBSIDIARIA) AS SUBSIDIARIA,
+        SUBSIDIARIA,
         ABS(
-            COALESCE(dif_actual.DIF_11190_11200, 0) + COALESCE(suma_acumulada.SUMA_ACUMULADA_11130_11140, 0)
+            COALESCE(da.DIF_11190_11200, 0) + COALESCE(sa.SUMA_ACUMULADA_11130_11140, 0)
         ) as MONTO_CL
     FROM (
-        -- (11190-11200)_t (fecha actual)
-        SELECT 
-            SUBSIDIARIA,
-            (SUM(CASE WHEN CONCEPTO = '11190' THEN MONTO ELSE 0 END) - 
-             SUM(CASE WHEN CONCEPTO = '11200' THEN MONTO ELSE 0 END)) as DIF_11190_11200
-        FROM SALIDAS
-        WHERE FECHA_DATOS = '{FD}'
-            AND CONCEPTO IN ('11190', '11200')
-        GROUP BY SUBSIDIARIA
-    ) dif_actual
-    FULL OUTER JOIN (
-        -- ∑i є [t-30, …, t] (11130-11140)_i (suma acumulada de 30 días)
-        SELECT 
-            SUBSIDIARIA,
-            SUM(
-                (SUM(CASE WHEN CONCEPTO = '11130' THEN MONTO ELSE 0 END) - 
-                 SUM(CASE WHEN CONCEPTO = '11140' THEN MONTO ELSE 0 END))
-            ) as SUMA_ACUMULADA_11130_11140
-        FROM SALIDAS
-        WHERE FECHA_DATOS IN (SELECT FECHA FROM rango_fechas)
-            AND CONCEPTO IN ('11130', '11140')
-        GROUP BY SUBSIDIARIA
-    ) suma_acumulada ON dif_actual.SUBSIDIARIA = suma_acumulada.SUBSIDIARIA
+        SELECT DISTINCT SUBSIDIARIA 
+        FROM (
+            SELECT SUBSIDIARIA FROM dif_actual
+            UNION
+            SELECT SUBSIDIARIA FROM suma_acumulada
+        )
+    ) todas_subsidiarias
+    LEFT JOIN dif_actual da ON todas_subsidiarias.SUBSIDIARIA = da.SUBSIDIARIA
+    LEFT JOIN suma_acumulada sa ON todas_subsidiarias.SUBSIDIARIA = sa.SUBSIDIARIA
 ),
 combinacion_base AS (
     SELECT DISTINCT SUBSIDIARIA 
