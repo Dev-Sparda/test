@@ -1,0 +1,72 @@
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+import pandas as pd
+import time
+import os
+
+def download_file_with_selenium(url, download_path, username=None, password=None):
+    # Configurar Chrome
+    chrome_options = Options()
+    
+    # Configurar descargas
+    prefs = {
+        "download.default_directory": download_path,
+        "download.prompt_for_download": False,
+        "download.directory_upgrade": True,
+        "safebrowsing.enabled": True
+    }
+    chrome_options.add_experimental_option("prefs", prefs)
+    
+    # Opcional: ejecutar en segundo plano
+    # chrome_options.add_argument("--headless")
+    
+    driver = webdriver.Chrome(options=chrome_options)
+    
+    try:
+        # Navegar a la URL
+        driver.get(url)
+        time.sleep(3)
+        
+        # Si requiere login (adaptar según tu caso)
+        if username and password:
+            # Ejemplo de login - ajustar selectores según tu SharePoint
+            driver.find_element(By.ID, "i0116").send_keys(username)
+            driver.find_element(By.ID, "idSIButton9").click()
+            time.sleep(2)
+            driver.find_element(By.ID, "i0118").send_keys(password)
+            driver.find_element(By.ID, "idSIButton9").click()
+            time.sleep(3)
+        
+        # Esperar descarga
+        print("Descargando archivo...")
+        time.sleep(10)  # Ajustar según tamaño del archivo
+        
+        # Buscar el archivo descargado más reciente
+        files = [f for f in os.listdir(download_path) if f.endswith('.xlsx')]
+        if files:
+            latest_file = max([os.path.join(download_path, f) for f in files], 
+                            key=os.path.getctime)
+            return latest_file
+        else:
+            print("No se encontró archivo descargado")
+            return None
+            
+    except Exception as e:
+        print(f"Error: {e}")
+        return None
+    finally:
+        driver.quit()
+
+# Uso
+url = "https://tuempresa.sharepoint.com/sites/infoauto/_layouts/15/download.aspx?SourceUrl=/sites/infoauto/Shared%20Documents/Documento.xlsx"
+download_folder = "C:/Descargas"  # Cambia por tu ruta
+
+# Descargar archivo
+file_path = download_file_with_selenium(url, download_folder)
+
+if file_path:
+    # Leer el archivo descargado
+    df = pd.read_excel(file_path, engine='openpyxl')
+    print("Archivo leído exitosamente:")
+    print(df.head())
