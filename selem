@@ -5,53 +5,96 @@ import pandas as pd
 import time
 import os
 
-def download_file_with_selenium(url, download_path, username=None, password=None):
-    # Configurar Chrome
+def download_file_with_selenium_fixed(url, download_path, username=None, password=None):
+    # Configurar Chrome para descargas automáticas
     chrome_options = Options()
     
-    # Configurar descargas
+    # Configuración crítica para descargas
     prefs = {
         "download.default_directory": download_path,
         "download.prompt_for_download": False,
         "download.directory_upgrade": True,
-        "safebrowsing.enabled": True
+        "safebrowsing.enabled": False,  # Importante para SharePoint
+        "plugins.always_open_pdf_externally": True,
+        "profile.default_content_settings.popups": 0,
+        "profile.content_settings.exceptions.automatic_downloads.*.setting": 1
     }
+    
     chrome_options.add_experimental_option("prefs", prefs)
     
-    # Opcional: ejecutar en segundo plano
-    # chrome_options.add_argument("--headless")
+    # Otras opciones importantes
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-features=DownloadBubble")
     
     driver = webdriver.Chrome(options=chrome_options)
     
     try:
-        # Navegar a la URL
+        print("Navegando a la URL...")
         driver.get(url)
-        time.sleep(3)
+        time.sleep(5)
         
-        # Si requiere login (adaptar según tu caso)
-        if username and password:
-            # Ejemplo de login - ajustar selectores según tu SharePoint
-            driver.find_element(By.ID, "i0116").send_keys(username)
-            driver.find_element(By.ID, "idSIButton9").click()
-            time.sleep(2)
-            driver.find_element(By.ID, "i0118").send_keys(password)
-            driver.find_element(By.ID, "idSIButton9").click()
-            time.sleep(3)
+        # Verificar si estamos en página de login
+        if "login.microsoftonline.com" in driver.current_url:
+            print("Detectada página de login...")
+            if username and password:
+                # Login automático (ajusta los selectores según tu tenant)
+                try:
+                    driver.find_element(By.ID, "i0116").send_keys(username)
+                    driver.find_element(By.ID, "idSIButton9").click()
+                    time.sleep(3)
+                    driver.find_element(By.ID, "i0118").send_keys(password)
+                    driver.find_element(By.ID, "idSIButton9").click()
+                    time.sleep(5)
+                    
+                    # Manejar "Mantener la sesión iniciada"
+                    try:
+                        driver.find_element(By.ID, "idSIButton9").click()
+                    except:
+                        pass
+                    time.sleep(3)
+                except Exception as e:
+                    print(f"Error en login automático: {e}")
+                    print("Por favor inicia sesión manualmente...")
+                    input("Presiona Enter después de iniciar sesión...")
         
-        # Esperar descarga
-        print("Descargando archivo...")
-        time.sleep(10)  # Ajustar según tamaño del archivo
+        # Esperar a que inicie la descarga
+        print("Esperando descarga...")
+        time.sleep(10)
         
-        # Buscar el archivo descargado más reciente
-        files = [f for f in os.listdir(download_path) if f.endswith('.xlsx')]
-        if files:
-            latest_file = max([os.path.join(download_path, f) for f in files], 
-                            key=os.path.getctime)
-            return latest_file
-        else:
-            print("No se encontró archivo descargado")
-            return None
+        # Verificar si hay mensajes de error en la página
+        page_source = driver.page_source
+        if "error" in page_source.lower() or "no se puede" in page_source.lower():
+            print("Posible error detectado en la página:")
+            print(driver.title)
+            # Tomar screenshot para debug
+            driver.save_screenshot("error_screenshot.png")
+            print("Screenshot guardado como 'error_screenshot.png'")
+        
+        # Esperar a que termine la descarga
+        max_wait = 60  # segundos máximo de espera
+        wait_time = 0
+        while wait_time < max_wait:
+            files = [f for f in os.listdir(download_path) 
+                    if f.endswith('.xlsx') and not f.startswith('~')]
             
+            # Buscar archivos .crdownload (descarga en progreso)
+            temp_files = [f for f in os.listdir(download_path) if f.endswith('.crdownload')]
+            
+            if not temp_files and files:  # No hay temp files y sí hay archivos Excel
+                latest_file = max([os.path.join(download_path, f) for f in files], 
+                                key=os.path.getctime)
+                print(f"✓ Descarga completada: {os.path.basename(latest_file)}")
+                return latest_file
+            
+            print(f"Esperando... ({wait_time}s)")
+            time.sleep(2)
+            wait_time += 2
+        
+        print("✗ Tiempo de espera agotado")
+        return None
+        
     except Exception as e:
         print(f"Error: {e}")
         return None
@@ -60,13 +103,19 @@ def download_file_with_selenium(url, download_path, username=None, password=None
 
 # Uso
 url = "https://tuempresa.sharepoint.com/sites/infoauto/_layouts/15/download.aspx?SourceUrl=/sites/infoauto/Shared%20Documents/Documento.xlsx"
-download_folder = "C:/Descargas"  # Cambia por tu ruta
+download_folder = "C:/Descargas"  # Usa ruta absoluta
 
-# Descargar archivo
-file_path = download_file_with_selenium(url, download_folder)
+# Crear carpeta si no existe
+os.makedirs(download_folder, exist_ok=True)
+
+file_path = download_file_with_selenium_fixed(url, download_folder)
 
 if file_path:
-    # Leer el archivo descargado
-    df = pd.read_excel(file_path, engine='openpyxl')
-    print("Archivo leído exitosamente:")
-    print(df.head())
+    try:
+        df = pd.read_excel(file_path, engine='openpyxl')
+        print("✓ Archivo leído exitosamente:")
+        print(df.head())
+    except Exception as e:
+        print(f"Error leyendo el archivo: {e}")
+else:
+    print("No se pudo descargar el archivo")
