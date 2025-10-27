@@ -119,3 +119,70 @@ if file_path:
         print(f"Error leyendo el archivo: {e}")
 else:
     print("No se pudo descargar el archivo")
+
+
+
+import sqlite3
+import requests
+import os
+from datetime import datetime
+
+def get_chrome_cookies(domain):
+    """Extrae cookies de Chrome/Edge en Windows"""
+    cookies = {}
+    
+    # Rutas donde Chrome/Edge almacenan las cookies
+    paths = [
+        os.path.expanduser(r"~\AppData\Local\Google\Chrome\User Data\Default\Network\Cookies"),
+        os.path.expanduser(r"~\AppData\Local\Microsoft\Edge\User Data\Default\Network\Cookies"),
+    ]
+    
+    for cookie_path in paths:
+        if os.path.exists(cookie_path):
+            try:
+                # Copiar temporalmente el archivo porque Chrome lo tiene bloqueado
+                temp_path = "temp_cookies.db"
+                with open(cookie_path, 'rb') as source:
+                    with open(temp_path, 'wb') as target:
+                        target.write(source.read())
+                
+                conn = sqlite3.connect(temp_path)
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT name, value, host_key, path, expires_utc, is_secure 
+                    FROM cookies 
+                    WHERE host_key LIKE ?
+                """, (f'%{domain}%',))
+                
+                for name, value, host, path, expires, secure in cursor.fetchall():
+                    cookies[name] = value
+                
+                conn.close()
+                os.remove(temp_path)
+                break
+                
+            except Exception as e:
+                print(f"Error accediendo a {cookie_path}: {e}")
+                continue
+    
+    return cookies
+
+# Usar la función
+sharepoint_domain = "sharepoint.com"
+cookies = get_chrome_cookies(sharepoint_domain)
+
+if cookies:
+    download_url = "https://tu-dominio.sharepoint.com/patron/archivo.ext"
+    
+    response = requests.get(download_url, cookies=cookies)
+    
+    if response.status_code == 200:
+        filename = "archivo_descargado.ext"
+        with open(filename, 'wb') as f:
+            f.write(response.content)
+        print(f"✅ Descarga exitosa: {filename}")
+    else:
+        print(f"❌ Error {response.status_code}")
+else:
+    print("No se encontraron cookies para SharePoint")
