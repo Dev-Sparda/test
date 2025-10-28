@@ -119,3 +119,48 @@ WHERE
         AND (p.NOM_ACRE = h.NOM_ACRE OR (p.NOM_ACRE IS NULL AND h.NOM_ACRE IS NULL))
         AND (p.RFC_ACRE = h.RFC OR (p.RFC_ACRE IS NULL AND h.RFC IS NULL))
     );
+
+
+
+-------
+
+SELECT
+    a.id_cliente,
+    a.CRED,
+    a.NUM_CRED,
+    a.PERIODO AS PERIODO_ACTUAL,
+    h.PERIODO AS PERIODO_HIST,
+    CASE WHEN a.NOMBRE <> h.NOMBRE THEN h.NOMBRE END AS NOMBRE_DIF,
+    CASE WHEN a.CURP <> h.CURP THEN h.CURP END AS CURP_DIF,
+    CASE WHEN a.RFC <> h.RFC THEN h.RFC END AS RFC_DIF,
+    CASE WHEN a.NOMBRE <> h.NOMBRE THEN 'SI' ELSE 'NO' END AS CAMBIO_NOMBRE,
+    CASE WHEN a.CURP <> h.CURP THEN 'SI' ELSE 'NO' END AS CAMBIO_CURP,
+    CASE WHEN a.RFC <> h.RFC THEN 'SI' ELSE 'NO' END AS CAMBIO_RFC
+FROM (
+    SELECT
+        CRED || '_' || NUM_CRED AS id_cliente,
+        CRED,
+        NUM_CRED,
+        NOMBRE,
+        CURP,
+        RFC,
+        PERIODO
+    FROM tu_tabla
+    WHERE PERIODO = :PERIODO_ACTUAL
+) a
+JOIN (
+    SELECT
+        CRED || '_' || NUM_CRED AS id_cliente,
+        CRED,
+        NUM_CRED,
+        NOMBRE,
+        CURP,
+        RFC,
+        PERIODO
+    FROM tu_tabla
+    WHERE PERIODO <> :PERIODO_ACTUAL
+) h ON a.id_cliente = h.id_cliente
+WHERE a.NOMBRE <> h.NOMBRE 
+   OR a.CURP <> h.CURP 
+   OR a.RFC <> h.RFC
+ORDER BY a.id_cliente, h.PERIODO;
