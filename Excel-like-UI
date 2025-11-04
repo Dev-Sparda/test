@@ -1,0 +1,158 @@
+import os
+import tkinter as tk
+from tkinter import ttk, filedialog
+import pandas as pd
+
+class CSVEditor:
+    def __init__(self, root, csv_folder):
+        self.root = root
+        self.csv_folder = csv_folder
+        self.current_file = None
+        self.df = None
+        self.entries = []
+        self.active_cell = None
+        self.pending_save = False
+        self.setup_ui()
+        self.load_csv_list()
+
+    def setup_ui(self):
+        self.root.title("Editor CSV - Barra de fórmulas")
+        self.root.geometry("900x650")
+
+        # === Barra de fórmulas ===
+        formula_frame = tk.Frame(self.root)
+        formula_frame.pack(pady=5, padx=10, fill="x")
+        tk.Label(formula_frame, text="Fórmula:", anchor="w").pack(side="left")
+        self.formula_bar = tk.Entry(formula_frame, font=("Consolas", 10))
+        self.formula_bar.pack(side="left", fill="x", expand=True, padx=(5, 0))
+        self.formula_bar.bind("<FocusOut>", self.apply_formula_change)
+        self.formula_bar.bind("<Return>", lambda e: self.apply_formula_change())
+
+        # === Selector de archivo ===
+        top_frame = tk.Frame(self.root)
+        top_frame.pack(pady=5)
+
+        tk.Label(top_frame, text="Seleccionar CSV:").pack(side=tk.LEFT, padx=5)
+        self.file_combo = ttk.Combobox(top_frame, state="readonly", width=50)
+        self.file_combo.pack(side=tk.LEFT, padx=5)
+        self.file_combo.bind("<<ComboboxSelected>>", self.on_file_selected)
+
+        tk.Button(top_frame, text="Actualizar lista", command=self.load_csv_list).pack(side=tk.LEFT, padx=5)
+
+        # === Área de cuadrícula con scroll ===
+        self.canvas = tk.Canvas(self.root)
+        self.scrollbar_y = tk.Scrollbar(self.root, orient="vertical", command=self.canvas.yview)
+        self.scrollbar_x = tk.Scrollbar(self.root, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(yscrollcommand=self.scrollbar_y.set, xscrollcommand=self.scrollbar_x.set)
+
+        self.scrollbar_y.pack(side="right", fill="y")
+        self.scrollbar_x.pack(side="bottom", fill="x")
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        self.grid_frame = tk.Frame(self.canvas)
+        self.canvas.create_window((0, 0), window=self.grid_frame, anchor="nw")
+        self.grid_frame.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+
+    def load_csv_list(self):
+        csv_files = [f for f in os.listdir(self.csv_folder) if f.endswith('.csv')]
+        csv_files.sort()
+        self.file_combo['values'] = csv_files
+        if csv_files and not self.current_file:
+            self.file_combo.set(csv_files[0])
+            self.load_csv(os.path.join(self.csv_folder, csv_files[0]))
+
+    def on_file_selected(self, event=None):
+        filename = self.file_combo.get()
+        if filename:
+            filepath = os.path.join(self.csv_folder, filename)
+            self.load_csv(filepath)
+
+    def load_csv(self, filepath):
+        try:
+            self.current_file = filepath
+            self.df = pd.read_csv(filepath, dtype=str)
+            self.df = self.df.fillna("")
+            self.render_grid()
+        except Exception as e:
+            tk.messagebox.showerror("Error", f"No se pudo cargar el CSV:\n{e}")
+
+    def render_grid(self):
+        for widget in self.grid_frame.winfo_children():
+            widget.destroy()
+        self.entries = []
+
+        if self.df is None or self.df.empty:
+            return
+
+        rows, cols = self.df.shape
+
+        # Encabezados
+        for j, col in enumerate(self.df.columns):
+            lbl = tk.Label(self.grid_frame, text=col, relief="raised", bg="#d0e0f0", padx=5, pady=2)
+            lbl.grid(row=0, column=j, sticky="nsew")
+
+        # Celdas editables (ancho fijo y compacto)
+        self.entries = [[None for _ in range(cols)] for _ in range(rows)]
+        for i in range(rows):
+            for j in range(cols):
+                value = str(self.df.iloc[i, j])
+                entry = tk.Entry(self.grid_frame, width=15)  # ← ancho fijo y compacto
+                entry.insert(0, value)
+                entry.grid(row=i+1, column=j, padx=1, pady=1, sticky="nsew")
+                self.entries[i][j] = entry
+
+                # Guardar posición en el widget
+                entry.row = i
+                entry.col = j
+
+                # Eventos
+                entry.bind("<FocusIn>", self.on_cell_focus)
+                entry.bind("<KeyRelease>", self.schedule_save)
+
+    def on_cell_focus(self, event):
+        widget = event.widget
+        self.active_cell = (widget.row, widget.col)
+        self.formula_bar.delete(0, tk.END)
+        self.formula_bar.insert(0, widget.get())
+
+    def apply_formula_change(self, event=None):
+        if self.active_cell is None:
+            return
+        i, j = self.active_cell
+        new_value = self.formula_bar.get()
+        entry = self.entries[i][j]
+        if entry.get() != new_value:
+            entry.delete(0, tk.END)
+            entry.insert(0, new_value)
+            self.schedule_save()
+
+    def schedule_save(self, event=None):
+        self.pending_save = True
+        if hasattr(self, '_save_timer'):
+            self.root.after_cancel(self._save_timer)
+        self._save_timer = self.root.after(1000, self.save_csv)
+
+    def save_csv(self):
+        if not self.pending_save or self.df is None:
+            return
+        try:
+            rows, cols = self.df.shape
+            for i in range(rows):
+                for j in range(cols):
+                    entry = self.entries[i][j]
+                    if entry:
+                        self.df.iloc[i, j] = entry.get()
+            self.df.to_csv(self.current_file, index=False)
+            print(f"Guardado: {os.path.basename(self.current_file)}")
+            self.pending_save = False
+        except Exception as e:
+            tk.messagebox.showerror("Error al guardar", str(e))
+
+# --- Inicio ---
+if __name__ == "__main__":
+    root = tk.Tk()
+    folder = filedialog.askdirectory(title="Selecciona la carpeta con archivos CSV")
+    if not folder:
+        exit()
+    app = CSVEditor(root, folder)
+    root.mainloop()
