@@ -1,0 +1,319 @@
+CREATE TABLE contrapartes (
+    id_contraparte INTEGER PRIMARY KEY,
+    nombre TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE emisiones (
+    id_emision INTEGER PRIMARY KEY,
+    emision TEXT NOT NULL UNIQUE
+);
+
+
+CREATE TABLE transacciones (
+    id_transaccion INTEGER PRIMARY KEY,
+    fecha_liquidacion DATE NOT NULL,
+    branch INTEGER NOT NULL CHECK (branch IN (1, 3)),
+    id_contraparte INTEGER NOT NULL,
+    tipo_operacion TEXT NOT NULL CHECK (tipo_operacion IN ('Envío', 'Recepción')),
+    id_emision INTEGER NOT NULL,
+    num_titulos REAL NOT NULL,
+    haircut REAL NOT NULL,
+    precio_mercado REAL NOT NULL,
+    precio_con_haircut REAL NOT NULL,
+    monto REAL NOT NULL,
+
+    FOREIGN KEY (id_contraparte) REFERENCES contrapartes(id_contraparte),
+    FOREIGN KEY (id_emision) REFERENCES emisiones(id_emision),
+    
+    UNIQUE(fecha_liquidacion, branch, id_contraparte, id_emision, tipo_operacion)
+);
+
+
+---python
+# main.py
+import os
+import sqlite3
+import pandas as pd
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, scrolledtext
+from pathlib import Path
+
+# --------------------------
+# CONFIGURACIÓN INICIAL
+# --------------------------
+DB_PATH = "db/transacciones.db"
+INPUT_DIR_DEFAULT = "input"
+
+Path("db").mkdir(exist_ok=True)
+Path(INPUT_DIR_DEFAULT).mkdir(exist_ok=True)
+
+# --------------------------
+# BASE DE DATOS: inicialización
+# --------------------------
+def inicializar_db(db_path):
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS contrapartes (
+                id_contraparte INTEGER PRIMARY KEY,
+                nombre TEXT NOT NULL UNIQUE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS emisiones (
+                id_emision INTEGER PRIMARY KEY,
+                emision TEXT NOT NULL UNIQUE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS transacciones (
+                id_transaccion INTEGER PRIMARY KEY,
+                fecha_liquidacion DATE NOT NULL,
+                branch INTEGER NOT NULL CHECK (branch IN (1, 3)),
+                id_contraparte INTEGER NOT NULL,
+                tipo_operacion TEXT NOT NULL CHECK (tipo_operacion IN ('Envío', 'Recepción')),
+                id_emision INTEGER NOT NULL,
+                num_titulos REAL NOT NULL,
+                haircut REAL NOT NULL,
+                precio_mercado REAL NOT NULL,
+                precio_con_haircut REAL NOT NULL,
+                monto REAL NOT NULL,
+                FOREIGN KEY (id_contraparte) REFERENCES contrapartes(id_contraparte),
+                FOREIGN KEY (id_emision) REFERENCES emisiones(id_emision),
+                UNIQUE(fecha_liquidacion, branch, id_contraparte, id_emision, tipo_operacion)
+            )
+        """)
+
+# --------------------------
+# FUNCIÓN: Carga de archivos (igual que antes, pero con callback de log)
+# --------------------------
+def cargar_archivos_excel(db_path, input_dir, log_callback=None):
+    def log(msg):
+        if log_callback:
+            log_callback(msg)
+
+    inicializar_db(db_path)
+    rutas_excel = list(Path(input_dir).glob("*.xlsx"))
+    if not rutas_excel:
+        log("⚠️  No se encontraron archivos .xlsx.")
+        return False
+
+    log(f"📂 Encontrados {len(rutas_excel)} archivos.")
+    dfs = []
+    for ruta in rutas_excel:
+        try:
+            df = pd.read_excel(ruta, dtype=str)
+            expected_cols = {
+                'fecha de liquidación', 'branch', 'contraparte', 'envío-recepción',
+                'emisión', 'número de títulos', 'haircut', 'precio de mercado',
+                'precio c/haircut', 'monto'
+            }
+            if not expected_cols.issubset(df.columns):
+                log(f"❌ Columnas faltantes en {ruta.name}")
+                continue
+            dfs.append(df)
+            log(f"✅ Leído: {ruta.name}")
+        except Exception as e:
+            log(f"❌ Error leyendo {ruta.name}: {e}")
+            continue
+
+    if not dfs:
+        log("⚠️  No hay datos válidos.")
+        return False
+
+    df_total = pd.concat(dfs, ignore_index=True)
+
+    try:
+        df_total['fecha de liquidación'] = pd.to_datetime(df_total['fecha de liquidación']).dt.date
+        df_total['branch'] = df_total['branch'].astype(int)
+        numeric_cols = ['número de títulos', 'haircut', 'precio de mercado', 'precio c/haircut', 'monto']
+        for col in numeric_cols:
+            df_total[col] = pd.to_numeric(df_total[col], errors='raise')
+    except Exception as e:
+        log(f"❌ Error en conversión de datos: {e}")
+        return False
+
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT MAX(fecha_liquidacion) FROM transacciones")
+        max_fecha = cursor.fetchone()[0]
+
+        if max_fecha:
+            df_total = df_total[df_total['fecha de liquidación'] > pd.to_datetime(max_fecha).date()]
+            if df_total.empty:
+                log("✅ No hay fechas nuevas para cargar.")
+                return True
+
+        log(f"📥 Procesando {len(df_total)} filas nuevas...")
+
+        cursor.execute("SELECT nombre, id_contraparte FROM contrapartes")
+        contraparte_id = dict(cursor.fetchall())
+        cursor.execute("SELECT emision, id_emision FROM emisiones")
+        emision_id = dict(cursor.fetchall())
+
+        nuevas_contrapartes = set(df_total['contraparte']) - set(contraparte_id.keys())
+        for c in nuevas_contrapartes:
+            cursor.execute("INSERT OR IGNORE INTO contrapartes (nombre) VALUES (?)", (c,))
+            cursor.execute("SELECT id_contraparte FROM contrapartes WHERE nombre = ?", (c,))
+            contraparte_id[c] = cursor.fetchone()[0]
+
+        nuevas_emisiones = set(df_total['emisión']) - set(emision_id.keys())
+        for e in nuevas_emisiones:
+            cursor.execute("INSERT OR IGNORE INTO emisiones (emision) VALUES (?)", (e,))
+            cursor.execute("SELECT id_emision FROM emisiones WHERE emision = ?", (e,))
+            emision_id[e] = cursor.fetchone()[0]
+
+        registros = []
+        for _, row in df_total.iterrows():
+            reg = (
+                row['fecha de liquidación'],
+                row['branch'],
+                contraparte_id[row['contraparte']],
+                row['envío-recepción'],
+                emision_id[row['emisión']],
+                row['número de títulos'],
+                row['haircut'],
+                row['precio de mercado'],
+                row['precio c/haircut'],
+                row['monto']
+            )
+            registros.append(reg)
+
+        cursor.executemany("""
+            INSERT OR IGNORE INTO transacciones (
+                fecha_liquidacion, branch, id_contraparte, tipo_operacion,
+                id_emision, num_titulos, haircut, precio_mercado,
+                precio_con_haircut, monto
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, registros)
+
+        log(f"✅ Carga exitosa. {cursor.rowcount} filas insertadas.")
+        return True
+
+# --------------------------
+# FUNCIÓN: Exportar vista completa
+# --------------------------
+def exportar_vista_como_excel(db_path, output_path):
+    query = """
+    SELECT
+        t.fecha_liquidacion AS "fecha de liquidación",
+        t.branch,
+        c.nombre AS contraparte,
+        t.tipo_operacion AS "envío-recepción",
+        e.emision AS "emisión",
+        t.num_titulos AS "número de títulos",
+        t.haircut,
+        t.precio_mercado AS "precio de mercado",
+        t.precio_con_haircut AS "precio c/haircut",
+        t.monto
+    FROM transacciones t
+    JOIN contrapartes c ON t.id_contraparte = c.id_contraparte
+    JOIN emisiones e ON t.id_emision = e.id_emision
+    ORDER BY t.fecha_liquidacion;
+    """
+    try:
+        with sqlite3.connect(db_path) as conn:
+            df = pd.read_sql_query(query, conn)
+            df.to_excel(output_path, index=False)
+        return True
+    except Exception as e:
+        print(f"Error al exportar: {e}")
+        return False
+
+# --------------------------
+# INTERFAZ GRÁFICA
+# --------------------------
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Cargador de Transacciones - SQLite + Pandas")
+        self.root.geometry("700x500")
+        self.root.resizable(True, True)
+
+        # Variables
+        self.input_dir = tk.StringVar(value=INPUT_DIR_DEFAULT)
+
+        # Carpeta de entrada
+        frame_input = ttk.Frame(root, padding=10)
+        frame_input.pack(fill="x")
+        ttk.Label(frame_input, text="Carpeta de entrada:").pack(anchor="w")
+        entry_frame = ttk.Frame(frame_input)
+        entry_frame.pack(fill="x", pady=5)
+        ttk.Entry(entry_frame, textvariable=self.input_dir, state="readonly").pack(side="left", fill="x", expand=True)
+        ttk.Button(entry_frame, text="Seleccionar", command=self.seleccionar_carpeta).pack(side="right", padx=(5, 0))
+
+        # Botones
+        frame_btns = ttk.Frame(root, padding=(10, 5))
+        frame_btns.pack(fill="x")
+        self.btn_cargar = ttk.Button(frame_btns, text="Cargar Archivos", command=self.iniciar_carga)
+        self.btn_cargar.pack(side="left")
+        self.btn_exportar = ttk.Button(frame_btns, text="Exportar Vista a Excel", command=self.exportar_vista)
+        self.btn_exportar.pack(side="left", padx=(10, 0))
+        self.btn_abrir_db = ttk.Button(frame_btns, text="Abrir Carpeta DB", command=self.abrir_carpeta_db)
+        self.btn_abrir_db.pack(side="right")
+
+        # Área de log
+        ttk.Label(root, text="Registro de actividad:").pack(anchor="w", padx=10)
+        self.log_text = scrolledtext.ScrolledText(root, height=20, state="disabled", wrap="word")
+        self.log_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+    def log(self, msg):
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", msg + "\n")
+        self.log_text.configure(state="disabled")
+        self.log_text.see("end")
+        self.root.update()
+
+    def seleccionar_carpeta(self):
+        carpeta = filedialog.askdirectory(initialdir=self.input_dir.get())
+        if carpeta:
+            self.input_dir.set(carpeta)
+
+    def iniciar_carga(self):
+        self.log("\n🔄 Iniciando proceso de carga...\n")
+        self.btn_cargar.config(state="disabled")
+        try:
+            exito = cargar_archivos_excel(DB_PATH, self.input_dir.get(), log_callback=self.log)
+            if exito:
+                self.log("✅ ¡Proceso completado con éxito!")
+            else:
+                self.log("⚠️ Proceso finalizado con advertencias o sin datos nuevos.")
+        except Exception as e:
+            self.log(f"💥 Error crítico: {e}")
+            messagebox.showerror("Error", f"Ocurrió un error: {e}")
+        finally:
+            self.btn_cargar.config(state="normal")
+
+    def exportar_vista(self):
+        ruta = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Archivos Excel", "*.xlsx")],
+            initialfile="vista_transacciones.xlsx"
+        )
+        if ruta:
+            if exportar_vista_como_excel(DB_PATH, ruta):
+                self.log(f"📤 Vista exportada a: {ruta}")
+                messagebox.showinfo("Éxito", "Archivo exportado correctamente.")
+            else:
+                self.log("❌ Error al exportar vista.")
+                messagebox.showerror("Error", "No se pudo exportar el archivo.")
+
+    def abrir_carpeta_db(self):
+        import subprocess, platform
+        carpeta = os.path.dirname(os.path.abspath(DB_PATH))
+        try:
+            if platform.system() == "Windows":
+                os.startfile(carpeta)
+            elif platform.system() == "Darwin":  # macOS
+                subprocess.Popen(["open", carpeta])
+            else:  # Linux
+                subprocess.Popen(["xdg-open", carpeta])
+        except Exception as e:
+            self.log(f"⚠️ No se pudo abrir la carpeta: {e}")
+
+# --------------------------
+# EJECUCIÓN
+# --------------------------
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = App(root)
+    root.mainloop()
