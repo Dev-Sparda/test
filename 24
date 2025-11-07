@@ -1,319 +1,510 @@
-CREATE TABLE contrapartes (
-    id_contraparte INTEGER PRIMARY KEY,
-    nombre TEXT NOT NULL UNIQUE
+--Estructura de tablas
+-- Catálogo de contrapartes
+CREATE TABLE CAT_CONTRAPARTES (
+    ID_CONTRAPARTE INTEGER PRIMARY KEY AUTOINCREMENT,
+    CONTRAPARTE TEXT NOT NULL UNIQUE,
+    CLAVE_BANXICO TEXT
 );
 
-CREATE TABLE emisiones (
-    id_emision INTEGER PRIMARY KEY,
-    emision TEXT NOT NULL UNIQUE
+-- Catálogo de ISIN
+CREATE TABLE CAT_ISIN (
+    ID_ISIN INTEGER PRIMARY KEY AUTOINCREMENT,
+    PAPEL TEXT NOT NULL UNIQUE,
+    CLAVE_ISIN TEXT
 );
 
-
-CREATE TABLE transacciones (
-    id_transaccion INTEGER PRIMARY KEY,
-    fecha_liquidacion DATE NOT NULL,
-    branch INTEGER NOT NULL CHECK (branch IN (1, 3)),
-    id_contraparte INTEGER NOT NULL,
-    tipo_operacion TEXT NOT NULL CHECK (tipo_operacion IN ('Envío', 'Recepción')),
-    id_emision INTEGER NOT NULL,
-    num_titulos REAL NOT NULL,
-    haircut REAL NOT NULL,
-    precio_mercado REAL NOT NULL,
-    precio_con_haircut REAL NOT NULL,
-    monto REAL NOT NULL,
-
-    FOREIGN KEY (id_contraparte) REFERENCES contrapartes(id_contraparte),
-    FOREIGN KEY (id_emision) REFERENCES emisiones(id_emision),
-    
-    UNIQUE(fecha_liquidacion, branch, id_contraparte, id_emision, tipo_operacion)
+-- Orígenes de datos (CSA, CLEARSTREAM, MORGAN)
+CREATE TABLE ORIGEN (
+    ID_ORIGEN INTEGER PRIMARY KEY,
+    NOMBRE TEXT NOT NULL UNIQUE  -- 'CSA', 'CLEARSTREAM', 'MORGAN'
 );
 
+-- Datos crudos normalizados (una sola tabla para los 3 orígenes)
+CREATE TABLE MOVIMIENTOS (
+    ID_MOVIMIENTO INTEGER PRIMARY KEY AUTOINCREMENT,
+    ID_ORIGEN INTEGER NOT NULL,
+    FECHA_LIQ DATE NOT NULL,
+    BRANCH TEXT,
+    CONTRAPARTE TEXT NOT NULL,
+    ENVIO_RECEPCION TEXT,  -- 'Envío', 'Recepción', etc.
+    EMISION TEXT NOT NULL,
+    TITULOS INTEGER,
+    ISIN TEXT,  -- solo Morgan lo trae, puede ser NULL en otros
+    FOREIGN KEY (ID_ORIGEN) REFERENCES ORIGEN(ID_ORIGEN)
+);
 
----python
-# main.py
+-------
+UTILS.py
 import os
+import re
+
+def normalize_emision(emision: str) -> str:
+    """Normaliza 'M BONOS 123456' → 'GOBFED 123456' y 'BONOS 123456' → 'GOBFED 123456'"""
+    if pd.isna(emision):
+        return emision
+    emision = str(emision).strip()
+    # Caso M BONOS
+    emision = re.sub(r'^M\s*BONOS\s+', 'GOBFED ', emision, flags=re.IGNORECASE)
+    # Caso solo BONOS (como en Vector PIP)
+    emision = re.sub(r'^BONOS\s+', 'GOBFED ', emision, flags=re.IGNORECASE)
+    return emision
+
+def classify_emision(emision: str) -> str:
+    """Clasifica como 'NACIONAL' si tiene 2 partes, 'EXTRANJERO' si 1"""
+    parts = str(emision).split()
+    return 'NACIONAL' if len(parts) == 2 else 'EXTRANJERO'
+
+def extract_date_from_pip_filename(filename: str) -> str:
+    """Extrae YYYYMMDD de 'PIP20251031M.xls' → '20251031'"""
+    import re
+    match = re.search(r'PIP(\d{8})M', filename, re.IGNORECASE)
+    return match.group(1) if match else None
+
+def full_path_display(path: str) -> str:
+    """Muestra ruta completa. Usa 'Raíz' si es directorio raíz (opcional)"""
+    if not path:
+        return "Raíz"
+    return os.path.abspath(path)
+
+
+-------------------
+db.py
 import sqlite3
 import pandas as pd
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
 from pathlib import Path
 
-# --------------------------
-# CONFIGURACIÓN INICIAL
-# --------------------------
-DB_PATH = "db/transacciones.db"
-INPUT_DIR_DEFAULT = "input"
+DB_PATH = "sistema_colateral.db"
 
-Path("db").mkdir(exist_ok=True)
-Path(INPUT_DIR_DEFAULT).mkdir(exist_ok=True)
-
-# --------------------------
-# BASE DE DATOS: inicialización
-# --------------------------
-def inicializar_db(db_path):
-    with sqlite3.connect(db_path) as conn:
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    with conn:
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS contrapartes (
-                id_contraparte INTEGER PRIMARY KEY,
-                nombre TEXT NOT NULL UNIQUE
-            )
-        """)
+        CREATE TABLE IF NOT EXISTS CAT_CONTRAPARTES (
+            ID_CONTRAPARTE INTEGER PRIMARY KEY AUTOINCREMENT,
+            CONTRAPARTE TEXT NOT NULL UNIQUE,
+            CLAVE_BANXICO TEXT
+        )""")
+
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS emisiones (
-                id_emision INTEGER PRIMARY KEY,
-                emision TEXT NOT NULL UNIQUE
-            )
-        """)
+        CREATE TABLE IF NOT EXISTS CAT_ISIN (
+            ID_ISIN INTEGER PRIMARY KEY AUTOINCREMENT,
+            PAPEL TEXT NOT NULL UNIQUE,
+            CLAVE_ISIN TEXT
+        )""")
+
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS transacciones (
-                id_transaccion INTEGER PRIMARY KEY,
-                fecha_liquidacion DATE NOT NULL,
-                branch INTEGER NOT NULL CHECK (branch IN (1, 3)),
-                id_contraparte INTEGER NOT NULL,
-                tipo_operacion TEXT NOT NULL CHECK (tipo_operacion IN ('Envío', 'Recepción')),
-                id_emision INTEGER NOT NULL,
-                num_titulos REAL NOT NULL,
-                haircut REAL NOT NULL,
-                precio_mercado REAL NOT NULL,
-                precio_con_haircut REAL NOT NULL,
-                monto REAL NOT NULL,
-                FOREIGN KEY (id_contraparte) REFERENCES contrapartes(id_contraparte),
-                FOREIGN KEY (id_emision) REFERENCES emisiones(id_emision),
-                UNIQUE(fecha_liquidacion, branch, id_contraparte, id_emision, tipo_operacion)
-            )
-        """)
+        CREATE TABLE IF NOT EXISTS ORIGEN (
+            ID_ORIGEN INTEGER PRIMARY KEY,
+            NOMBRE TEXT NOT NULL UNIQUE
+        )""")
 
-# --------------------------
-# FUNCIÓN: Carga de archivos (igual que antes, pero con callback de log)
-# --------------------------
-def cargar_archivos_excel(db_path, input_dir, log_callback=None):
-    def log(msg):
-        if log_callback:
-            log_callback(msg)
+        conn.execute("INSERT OR IGNORE INTO ORIGEN VALUES (1, 'CSA'), (2, 'CLEARSTREAM'), (3, 'MORGAN')")
 
-    inicializar_db(db_path)
-    rutas_excel = list(Path(input_dir).glob("*.xlsx"))
-    if not rutas_excel:
-        log("⚠️  No se encontraron archivos .xlsx.")
-        return False
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS MOVIMIENTOS (
+            ID_MOVIMIENTO INTEGER PRIMARY KEY AUTOINCREMENT,
+            ID_ORIGEN INTEGER NOT NULL,
+            FECHA_LIQ DATE NOT NULL,
+            BRANCH TEXT,
+            CONTRAPARTE TEXT NOT NULL,
+            ENVIO_RECEPCION TEXT,
+            EMISION TEXT NOT NULL,
+            TITULOS INTEGER,
+            ISIN TEXT,
+            FOREIGN KEY (ID_ORIGEN) REFERENCES ORIGEN(ID_ORIGEN)
+        )""")
 
-    log(f"📂 Encontrados {len(rutas_excel)} archivos.")
-    dfs = []
-    for ruta in rutas_excel:
-        try:
-            df = pd.read_excel(ruta, dtype=str)
-            expected_cols = {
-                'fecha de liquidación', 'branch', 'contraparte', 'envío-recepción',
-                'emisión', 'número de títulos', 'haircut', 'precio de mercado',
-                'precio c/haircut', 'monto'
-            }
-            if not expected_cols.issubset(df.columns):
-                log(f"❌ Columnas faltantes en {ruta.name}")
-                continue
-            dfs.append(df)
-            log(f"✅ Leído: {ruta.name}")
-        except Exception as e:
-            log(f"❌ Error leyendo {ruta.name}: {e}")
-            continue
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS REPORTE_NACIONAL (
+            ID INTEGER PRIMARY KEY AUTOINCREMENT,
+            CLAVE_BANXICO TEXT,
+            CONTRAPARTE TEXT,
+            EMISION TEXT,
+            TITULOS INTEGER,
+            RECIBE_ENTREGA TEXT,
+            CLAVE_ISIN TEXT,
+            AFORO REAL,
+            PRECIO REAL,
+            PRECIO_TOTAL REAL,
+            VAL_MERCA REAL
+        )""")
 
-    if not dfs:
-        log("⚠️  No hay datos válidos.")
-        return False
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS REPORTE_EXTRANJERO (
+            ID INTEGER PRIMARY KEY AUTOINCREMENT,
+            CLAVE_BANXICO TEXT,
+            CONTRAPARTE TEXT,
+            EMISION TEXT,
+            TITULOS INTEGER,
+            RECIBE_ENTREGA TEXT,
+            CLAVE_ISIN TEXT,
+            AFORO REAL,
+            PRECIO REAL,
+            PRECIO_TOTAL REAL,
+            VAL_MERCA REAL
+        )""")
 
-    df_total = pd.concat(dfs, ignore_index=True)
+    conn.close()
 
-    try:
-        df_total['fecha de liquidación'] = pd.to_datetime(df_total['fecha de liquidación']).dt.date
-        df_total['branch'] = df_total['branch'].astype(int)
-        numeric_cols = ['número de títulos', 'haircut', 'precio de mercado', 'precio c/haircut', 'monto']
-        for col in numeric_cols:
-            df_total[col] = pd.to_numeric(df_total[col], errors='raise')
-    except Exception as e:
-        log(f"❌ Error en conversión de datos: {e}")
-        return False
+def get_latest_date():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT MAX(FECHA_LIQ) FROM MOVIMIENTOS")
+    result = cursor.fetchone()[0]
+    conn.close()
+    return result  # Puede ser None (primera carga)
 
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT MAX(fecha_liquidacion) FROM transacciones")
-        max_fecha = cursor.fetchone()[0]
 
-        if max_fecha:
-            df_total = df_total[df_total['fecha de liquidación'] > pd.to_datetime(max_fecha).date()]
-            if df_total.empty:
-                log("✅ No hay fechas nuevas para cargar.")
-                return True
+----------------
+etl.py
 
-        log(f"📥 Procesando {len(df_total)} filas nuevas...")
+import pandas as pd
+import sqlite3
+from tkinter import messagebox
+from utils import normalize_emision, classify_emision
+from db import DB_PATH
 
-        cursor.execute("SELECT nombre, id_contraparte FROM contrapartes")
-        contraparte_id = dict(cursor.fetchall())
-        cursor.execute("SELECT emision, id_emision FROM emisiones")
-        emision_id = dict(cursor.fetchall())
+ORIGEN_ID = {'CSA': 1, 'CLEARSTREAM': 2, 'MORGAN': 3}
 
-        nuevas_contrapartes = set(df_total['contraparte']) - set(contraparte_id.keys())
-        for c in nuevas_contrapartes:
-            cursor.execute("INSERT OR IGNORE INTO contrapartes (nombre) VALUES (?)", (c,))
-            cursor.execute("SELECT id_contraparte FROM contrapartes WHERE nombre = ?", (c,))
-            contraparte_id[c] = cursor.fetchone()[0]
+def load_excel_file(filepath: str, origen: str):
+    if origen in ['CSA', 'CLEARSTREAM']:
+        usecols = "B:K"
+        skiprows = 5
+    else:  # MORGAN
+        usecols = "B:L"
+        skiprows = 5
 
-        nuevas_emisiones = set(df_total['emisión']) - set(emision_id.keys())
-        for e in nuevas_emisiones:
-            cursor.execute("INSERT OR IGNORE INTO emisiones (emision) VALUES (?)", (e,))
-            cursor.execute("SELECT id_emision FROM emisiones WHERE emision = ?", (e,))
-            emision_id[e] = cursor.fetchone()[0]
+    df = pd.read_excel(filepath, sheet_name='Movimientos', skiprows=skiprows, usecols=usecols)
 
-        registros = []
-        for _, row in df_total.iterrows():
-            reg = (
-                row['fecha de liquidación'],
-                row['branch'],
-                contraparte_id[row['contraparte']],
-                row['envío-recepción'],
-                emision_id[row['emisión']],
-                row['número de títulos'],
-                row['haircut'],
-                row['precio de mercado'],
-                row['precio c/haircut'],
-                row['monto']
-            )
-            registros.append(reg)
+    # Renombrar columnas comunes
+    col_map = {
+        'Fecha Liq.': 'FECHA_LIQ',
+        'Branch': 'BRANCH',
+        'Contraparte': 'CONTRAPARTE',
+        'Envío / Recepción': 'ENVIO_RECEPCION',
+        'Emisión': 'EMISION',
+        '# títulos': 'TITULOS',
+        'Haircut': 'HAIRCUT',
+        'ISIN': 'ISIN'  # solo en Morgan
+    }
+    df.rename(columns=col_map, inplace=True)
 
-        cursor.executemany("""
-            INSERT OR IGNORE INTO transacciones (
-                fecha_liquidacion, branch, id_contraparte, tipo_operacion,
-                id_emision, num_titulos, haircut, precio_mercado,
-                precio_con_haircut, monto
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, registros)
+    # Eliminar columnas que no se usan
+    cols_to_drop = ['Precio Mercado', 'Precio c/Haricut', 'Monto $', 'Monto $ USD', 'Monto $ MXN']
+    df.drop(columns=[c for c in cols_to_drop if c in df.columns], inplace=True)
 
-        log(f"✅ Carga exitosa. {cursor.rowcount} filas insertadas.")
-        return True
+    df['EMISION'] = df['EMISION'].apply(normalize_emision)
+    df['ID_ORIGEN'] = ORIGEN_ID[origen]
 
-# --------------------------
-# FUNCIÓN: Exportar vista completa
-# --------------------------
-def exportar_vista_como_excel(db_path, output_path):
-    query = """
-    SELECT
-        t.fecha_liquidacion AS "fecha de liquidación",
-        t.branch,
-        c.nombre AS contraparte,
-        t.tipo_operacion AS "envío-recepción",
-        e.emision AS "emisión",
-        t.num_titulos AS "número de títulos",
-        t.haircut,
-        t.precio_mercado AS "precio de mercado",
-        t.precio_con_haircut AS "precio c/haircut",
-        t.monto
-    FROM transacciones t
-    JOIN contrapartes c ON t.id_contraparte = c.id_contraparte
-    JOIN emisiones e ON t.id_emision = e.id_emision
-    ORDER BY t.fecha_liquidacion;
+    return df
+
+def validate_and_load_movimientos(df: pd.DataFrame, origen: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Obtener contrapartes existentes
+    existing = set(row[0] for row in cursor.execute("SELECT CONTRAPARTE FROM CAT_CONTRAPARTES").fetchall())
+
+    nuevas_contrapartes = set(df['CONTRAPARTE'].unique()) - existing
+    for cp in nuevas_contrapartes:
+        if messagebox.askyesno("Contraparte no encontrada",
+                               f"No se encontró la contraparte '{cp}' en el catálogo.\n¿Desea darla de alta?"):
+            # Aquí podrías pedir CLAVE_BANXICO con un diálogo adicional
+            clave_banxico = messagebox.askstring("Clave Banxico", f"Ingrese CLAVE_BANXICO para '{cp}':")
+            cursor.execute("INSERT INTO CAT_CONTRAPARTES (CONTRAPARTE, CLAVE_BANXICO) VALUES (?, ?)",
+                           (cp, clave_banxico or None))
+
+    # Filtrar fechas nuevas
+    latest = pd.read_sql("SELECT MAX(FECHA_LIQ) as max_date FROM MOVIMIENTOS", conn).iloc[0]['max_date']
+    if latest:
+        df = df[pd.to_datetime(df['FECHA_LIQ']) > pd.to_datetime(latest)]
+
+    # Guardar en MOVIMIENTOS
+    df.to_sql('MOVIMIENTOS', conn, if_exists='append', index=False, method='multi')
+
+    conn.commit()
+    conn.close()
+
+# etl.py (continuación)
+
+import os
+import pandas as pd
+import sqlite3
+from tkinter import filedialog, messagebox
+from utils import normalize_emision, classify_emision, extract_date_from_pip_filename
+
+def run_pipeline(root_window):
     """
+    Ejecuta todo el pipeline de generación de reportes.
+    root_window: necesario para filedialog desde una app CTk.
+    """
+    conn = sqlite3.connect(DB_PATH)
+
     try:
-        with sqlite3.connect(db_path) as conn:
-            df = pd.read_sql_query(query, conn)
-            df.to_excel(output_path, index=False)
-        return True
-    except Exception as e:
-        print(f"Error al exportar: {e}")
-        return False
+        # 1. Cargar todos los movimientos
+        df_mov = pd.read_sql("""
+            SELECT 
+                m.CONTRAPARTE,
+                m.EMISION,
+                m.TITULOS,
+                m.ISIN,
+                m.ENVIO_RECEPCION
+            FROM MOVIMIENTOS m
+        """, conn)
 
-# --------------------------
-# INTERFAZ GRÁFICA
-# --------------------------
-class App:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Cargador de Transacciones - SQLite + Pandas")
-        self.root.geometry("700x500")
-        self.root.resizable(True, True)
+        if df_mov.empty:
+            messagebox.showwarning("Advertencia", "No hay movimientos cargados.")
+            return
 
-        # Variables
-        self.input_dir = tk.StringVar(value=INPUT_DIR_DEFAULT)
+        # 2. Agrupar por contraparte + emisión
+        df_agrupado = df_mov.groupby(['CONTRAPARTE', 'EMISION'], as_index=False).agg({
+            'TITULOS': 'sum',
+            'ISIN': 'first',
+            'ENVIO_RECEPCION': 'first'
+        })
 
-        # Carpeta de entrada
-        frame_input = ttk.Frame(root, padding=10)
-        frame_input.pack(fill="x")
-        ttk.Label(frame_input, text="Carpeta de entrada:").pack(anchor="w")
-        entry_frame = ttk.Frame(frame_input)
-        entry_frame.pack(fill="x", pady=5)
-        ttk.Entry(entry_frame, textvariable=self.input_dir, state="readonly").pack(side="left", fill="x", expand=True)
-        ttk.Button(entry_frame, text="Seleccionar", command=self.seleccionar_carpeta).pack(side="right", padx=(5, 0))
+        # 3. Clasificar
+        df_agrupado['TIPO'] = df_agrupado['EMISION'].apply(classify_emision)
+        total_titulos = df_agrupado['TITULOS'].sum()
+        messagebox.showinfo("Total", f"Suma total de títulos: {total_titulos:,}")
 
-        # Botones
-        frame_btns = ttk.Frame(root, padding=(10, 5))
-        frame_btns.pack(fill="x")
-        self.btn_cargar = ttk.Button(frame_btns, text="Cargar Archivos", command=self.iniciar_carga)
-        self.btn_cargar.pack(side="left")
-        self.btn_exportar = ttk.Button(frame_btns, text="Exportar Vista a Excel", command=self.exportar_vista)
-        self.btn_exportar.pack(side="left", padx=(10, 0))
-        self.btn_abrir_db = ttk.Button(frame_btns, text="Abrir Carpeta DB", command=self.abrir_carpeta_db)
-        self.btn_abrir_db.pack(side="right")
+        # 4. Enriquecer con catálogos
+        cat_cp = pd.read_sql("SELECT CONTRAPARTE, CLAVE_BANXICO FROM CAT_CONTRAPARTES", conn)
+        cat_isin = pd.read_sql("SELECT PAPEL, CLAVE_ISIN FROM CAT_ISIN", conn)
 
-        # Área de log
-        ttk.Label(root, text="Registro de actividad:").pack(anchor="w", padx=10)
-        self.log_text = scrolledtext.ScrolledText(root, height=20, state="disabled", wrap="word")
-        self.log_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        df_final = df_agrupado.merge(cat_cp, on='CONTRAPARTE', how='left')
+        df_final = df_final.merge(cat_isin, left_on='EMISION', right_on='PAPEL', how='left')
 
-    def log(self, msg):
-        self.log_text.configure(state="normal")
-        self.log_text.insert("end", msg + "\n")
-        self.log_text.configure(state="disabled")
-        self.log_text.see("end")
-        self.root.update()
-
-    def seleccionar_carpeta(self):
-        carpeta = filedialog.askdirectory(initialdir=self.input_dir.get())
-        if carpeta:
-            self.input_dir.set(carpeta)
-
-    def iniciar_carga(self):
-        self.log("\n🔄 Iniciando proceso de carga...\n")
-        self.btn_cargar.config(state="disabled")
-        try:
-            exito = cargar_archivos_excel(DB_PATH, self.input_dir.get(), log_callback=self.log)
-            if exito:
-                self.log("✅ ¡Proceso completado con éxito!")
-            else:
-                self.log("⚠️ Proceso finalizado con advertencias o sin datos nuevos.")
-        except Exception as e:
-            self.log(f"💥 Error crítico: {e}")
-            messagebox.showerror("Error", f"Ocurrió un error: {e}")
-        finally:
-            self.btn_cargar.config(state="normal")
-
-    def exportar_vista(self):
-        ruta = filedialog.asksaveasfilename(
-            defaultextension=".xlsx",
-            filetypes=[("Archivos Excel", "*.xlsx")],
-            initialfile="vista_transacciones.xlsx"
+        # 5. Cargar INFORME BONOS para AFORO
+        bonos_path = filedialog.askopenfilename(
+            parent=root_window,
+            title="Selecciona el archivo 'INFORME BONOS'",
+            filetypes=[("Excel files", "*.xlsx *.xls")]
         )
-        if ruta:
-            if exportar_vista_como_excel(DB_PATH, ruta):
-                self.log(f"📤 Vista exportada a: {ruta}")
-                messagebox.showinfo("Éxito", "Archivo exportado correctamente.")
-            else:
-                self.log("❌ Error al exportar vista.")
-                messagebox.showerror("Error", "No se pudo exportar el archivo.")
+        if not bonos_path:
+            raise Exception("Archivo de INFORME BONOS no seleccionado.")
 
-    def abrir_carpeta_db(self):
-        import subprocess, platform
-        carpeta = os.path.dirname(os.path.abspath(DB_PATH))
+        df_bonos = pd.read_excel(bonos_path, sheet_name=0)  # Primera hoja
+        df_bonos.rename(columns={'Name': 'EMISION', 'Haircut': 'AFORO'}, inplace=True)
+        df_bonos['EMISION'] = df_bonos['EMISION'].apply(normalize_emision)
+        df_bonos['CLAVE_AFORO'] = "-" + df_bonos['Saldo inicial (tit.)'].astype(str) + " " + df_bonos['EMISION']
+
+        # Crear clave en nuestro df
+        df_final['CLAVE_AFORO'] = df_final['TITULOS'].astype(str) + " " + df_final['EMISION']
+
+        # Merge para AFORO
+        df_final = df_final.merge(
+            df_bonos[['CLAVE_AFORO', 'AFORO']],
+            on='CLAVE_AFORO',
+            how='left'
+        )
+
+        # 6. Completar AFORO faltante para EXTRANJEROS usando CSA
+        missing_extr = df_final[
+            (df_final['TIPO'] == 'EXTRANJERO') & (df_final['AFORO'].isna())
+        ][['CONTRAPARTE', 'EMISION']]
+
+        if not missing_extr.empty:
+            # Cargar CSA (ID_ORIGEN = 1)
+            df_csa = pd.read_sql("""
+                SELECT CONTRAPARTE, EMISION, HAIRCUT, FECHA_LIQ
+                FROM MOVIMIENTOS
+                WHERE ID_ORIGEN = 1
+            """, conn)
+
+            df_csa['EMISION'] = df_csa['EMISION'].apply(normalize_emision)
+            df_csa = df_csa.sort_values('FECHA_LIQ', ascending=False)
+            df_csa_dedup = df_csa.drop_duplicates(subset=['CONTRAPARTE', 'EMISION'])
+
+            missing_extr = missing_extr.merge(
+                df_csa_dedup[['CONTRAPARTE', 'EMISION', 'HAIRCUT']],
+                on=['CONTRAPARTE', 'EMISION'],
+                how='left'
+            )
+            # Convertir 0.900 → 9.0
+            missing_extr['HAIRCUT'] = missing_extr['HAIRCUT'] * 100
+
+            # Actualizar AFORO en df_final
+            for idx, row in missing_extr.iterrows():
+                mask = (df_final['CONTRAPARTE'] == row['CONTRAPARTE']) & \
+                       (df_final['EMISION'] == row['EMISION'])
+                df_final.loc[mask, 'AFORO'] = row['HAIRCUT']
+
+        # 7. Guardar pendientes NACIONALES sin AFORO
+        pendientes_nac = df_final[
+            (df_final['TIPO'] == 'NACIONAL') & (df_final['AFORO'].isna())
+        ][['CONTRAPARTE', 'EMISION', 'TITULOS']]
+        
+        if not pendientes_nac.empty:
+            output_path = os.path.join(os.path.dirname(bonos_path), "pendientes_por_confirmar_colaterales_aforo.xlsx")
+            pendientes_nac.to_excel(output_path, index=False)
+            messagebox.showinfo("Pendientes", f"Archivo de pendientes nacional guardado:\n{output_path}")
+
+        # 8. Cargar Vector PIP
+        pip_path = filedialog.askopenfilename(
+            parent=root_window,
+            title="Selecciona el archivo Vector PIP",
+            filetypes=[("Excel files", "*.xlsx *.xls")]
+        )
+        if not pip_path:
+            raise Exception("Archivo Vector PIP no seleccionado.")
+
+        pip_date = extract_date_from_pip_filename(os.path.basename(pip_path))
+        if not pip_date:
+            raise Exception("No se pudo extraer la fecha del archivo PIP. Asegúrate del formato: PIPYYYYMMDDM.xls")
+
+        sheet_name = f"{pip_date}_MD"
+        df_pip = pd.read_excel(pip_path, sheet_name=sheet_name)
+        df_pip.rename(columns={'Emisora': 'EMISORA', 'Serie': 'SERIE', 'Precio Sucio': 'PRECIO_SUCIO'}, inplace=True)
+        df_pip['EMISORA'] = df_pip['EMISORA'].apply(normalize_emision)
+        df_pip['CLAVE_PIP'] = df_pip['EMISORA'] + " " + df_pip['SERIE']
+
+        # Obtener tipo de cambio
+        tc_row = df_pip[(df_pip['EMISORA'] == 'MXPUSD') & (df_pip['SERIE'] == 'V48')]
+        if tc_row.empty:
+            raise Exception("No se encontró tipo de cambio (MXPUSD V48) en Vector PIP.")
+        tipo_cambio = tc_row.iloc[0]['Precio Limpio']
+
+        # Merge con PIP
+        df_final = df_final.merge(
+            df_pip[['CLAVE_PIP', 'PRECIO_SUCIO']],
+            left_on='EMISION',
+            right_on='CLAVE_PIP',
+            how='left'
+        )
+
+        # 9. Cargar VMDS para precios faltantes
+        vmds_path = filedialog.askopenfilename(
+            parent=root_window,
+            title="Selecciona el archivo VMDS (CSV)",
+            filetypes=[("CSV files", "*.csv")]
+        )
+        if not vmds_path:
+            raise Exception("Archivo VMDS no seleccionado.")
+
+        df_vmds = pd.read_csv(vmds_path, header=None, dtype=str)
+        if df_vmds.shape[1] < 5:
+            raise Exception("El archivo VMDS debe tener al menos 5 columnas.")
+
+        df_vmds.rename(columns={0: 'EMISION_VMDS', 3: 'EMISORA_VMDS', 4: 'SERIE_VMDS'}, inplace=True)
+        df_vmds['EMISION_VMDS'] = df_vmds['EMISION_VMDS'].apply(normalize_emision)
+        df_vmds['EMISORA_VMDS'] = df_vmds['EMISORA_VMDS'].apply(normalize_emision)
+        df_vmds['CLAVE_VMDS'] = df_vmds['EMISORA_VMDS'] + " " + df_vmds['SERIE_VMDS']
+
+        # Filtrar filas sin precio en PIP
+        missing_precio = df_final[df_final['PRECIO_SUCIO'].isna()][['EMISION']]
+        if not missing_precio.empty:
+            # Cruzar con VMDS → PIP
+            missing_precio = missing_precio.merge(
+                df_vmds[['EMISION_VMDS', 'CLAVE_VMDS']],
+                left_on='EMISION',
+                right_on='EMISION_VMDS',
+                how='inner'
+            )
+            missing_precio = missing_precio.merge(
+                df_pip[['CLAVE_PIP', 'PRECIO_SUCIO']],
+                left_on='CLAVE_VMDS',
+                right_on='CLAVE_PIP',
+                how='left'
+            )
+
+            # Dolarizar
+            missing_precio['PRECIO_SUCIO'] = pd.to_numeric(missing_precio['PRECIO_SUCIO'], errors='coerce')
+            missing_precio['PRECIO_USD'] = missing_precio['PRECIO_SUCIO'] / tipo_cambio
+
+            # Actualizar en df_final
+            for idx, row in missing_precio.iterrows():
+                mask = df_final['EMISION'] == row['EMISION']
+                df_final.loc[mask, 'PRECIO_SUCIO'] = row['PRECIO_USD']
+
+        # 10. Calcular campos finales
+        df_final['PRECIO'] = df_final['PRECIO_SUCIO']
+        df_final['PRECIO_TOTAL'] = df_final['TITULOS'] * df_final['PRECIO']
+        df_final['VAL_MERCA'] = df_final['PRECIO_TOTAL']  # Ajusta si es distinto
+
+        # 11. Separar nacional y extranjero
+        nacional = df_final[df_final['TIPO'] == 'NACIONAL'].copy()
+        extranjero = df_final[df_final['TIPO'] == 'EXTRANJERO'].copy()
+
+        # Seleccionar columnas requeridas
+        cols = ['CLAVE_BANXICO', 'CONTRAPARTE', 'EMISION', 'TITULOS', 'ENVIO_RECEPCION',
+                'CLAVE_ISIN', 'AFORO', 'PRECIO', 'PRECIO_TOTAL', 'VAL_MERCA']
+        nacional = nacional[cols]
+        extranjero = extranjero[cols]
+
+        # Renombrar ENVIO_RECEPCION → RECIBE_ENTREGA
+        nacional.rename(columns={'ENVIO_RECEPCION': 'RECIBE_ENTREGA'}, inplace=True)
+        extranjero.rename(columns={'ENVIO_RECEPCION': 'RECIBE_ENTREGA'}, inplace=True)
+
+        # 12. Guardar en DB (con TRUNCATE)
+        nacional.to_sql('REPORTE_NACIONAL', conn, if_exists='replace', index=False)
+        extranjero.to_sql('REPORTE_EXTRANJERO', conn, if_exists='replace', index=False)
+
+        messagebox.showinfo("Éxito", "Reportes generados y guardados en la base de datos.")
+
+    except Exception as e:
+        messagebox.showerror("Error en pipeline", str(e))
+        raise e
+    finally:
+        conn.close()
+
+--------------------------------
+ui.py
+
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
+from etl import load_excel_file, validate_and_load_movimientos
+from db import init_db
+
+class App(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("Sistema de Colateral")
+        self.geometry("600x400")
+
+        init_db()
+
+        self.button_csa = ctk.CTkButton(self, text="Cargar CSA", command=lambda: self.load_file("CSA"))
+        self.button_csa.pack(pady=10)
+
+        self.button_clear = ctk.CTkButton(self, text="Cargar CLEARSTREAM", command=lambda: self.load_file("CLEARSTREAM"))
+        self.button_clear.pack(pady=10)
+
+        self.button_morgan = ctk.CTkButton(self, text="Cargar MORGAN", command=lambda: self.load_file("MORGAN"))
+        self.button_morgan.pack(pady=10)
+
+        self.button_run = ctk.CTkButton(self, text="Generar Reportes", command=self.run_pipeline)
+        self.button_run.pack(pady=20)
+
+    def load_file(self, origen):
+        filepath = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")])
+        if not filepath:
+            return
         try:
-            if platform.system() == "Windows":
-                os.startfile(carpeta)
-            elif platform.system() == "Darwin":  # macOS
-                subprocess.Popen(["open", carpeta])
-            else:  # Linux
-                subprocess.Popen(["xdg-open", carpeta])
+            df = load_excel_file(filepath, origen)
+            validate_and_load_movimientos(df, origen)
+            messagebox.showinfo("Éxito", f"Archivo {origen} cargado correctamente.")
         except Exception as e:
-            self.log(f"⚠️ No se pudo abrir la carpeta: {e}")
+            messagebox.showerror("Error", f"Error al cargar {origen}:\n{str(e)}")
 
-# --------------------------
-# EJECUCIÓN
-# --------------------------
+    def run_pipeline(self):
+        # Aquí iría la lógica completa: agrupar, clasificar, cargar insumos, generar reportes
+        messagebox.showinfo("Info", "Pipeline de generación de reportes aún en desarrollo.")
+        # → Próximo paso: implementar esto en etl.py
+
+    def run_pipeline(self):
+    from etl import run_pipeline
+    run_pipeline(self)  # pasa la ventana para filedialog
+
+------------------------------------------
+main.py
+
+import customtkinter as ctk
+from ui import App
+
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = App(root)
-    root.mainloop()
+    ctk.set_appearance_mode("System")
+    ctk.set_default_color_theme("blue")
+    app = App()
+    app.mainloop()
+
