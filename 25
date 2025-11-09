@@ -1,34 +1,58 @@
 def load_excel_file(filepath: str, origen: str):
-    # ... (engine, usecols, skiprows) ...
+    if filepath.lower().endswith('.xls'):
+        engine = 'xlrd'
+    else:
+        engine = 'openpyxl'
+
+    skiprows = 5  # fila 6 (0-based: salta 0-5)
 
     df = pd.read_excel(
         filepath,
         sheet_name='Movimientos',
         skiprows=skiprows,
-        usecols=usecols,
         engine=engine
     )
 
-    # Mapeo de columnas → incluir HAIRCUT y # títulos
-    col_map = {
-        'Fecha Liq.': 'FECHA_LIQ',
-        'Branch': 'BRANCH',
-        'Contraparte': 'CONTRAPARTE',
-        'Envío / Recepción': 'ENVIO_RECEPCION',
-        'Emisión': 'EMISION',
-        '# títulos': 'TITULOS',      # <-- Aquí estaba el nombre real
-        'Haircut': 'HAIRCUT',        # <-- Conservar Haircut
-        'ISIN': 'ISIN'
-    }
-    df.rename(columns=col_map, inplace=True)
+    # Eliminar columnas vacías (por si acaso)
+    df = df.dropna(how='all', axis=1)
 
-    # Eliminar columnas que no se usan (Monto, etc.)
-    cols_to_drop = ['Precio Mercado', 'Precio c/Haricut', 'Monto $', 'Monto $ USD', 'Monto $ MXN']
-    df.drop(columns=[c for c in cols_to_drop if c in df.columns], inplace=True)
+    # Definir nombres fijos según layout
+    if origen == 'MORGAN':
+        # B a L → 11 columnas, pero solo usamos hasta ISIN (10 datos + 1 extra)
+        nombres = [
+            'FECHA_LIQ', 'BRANCH', 'CONTRAPARTE', 'ENVIO_RECEPCION',
+            'EMISION', 'TITULOS', 'HAIRCUT', 'PRECIO_MERCADO',
+            'PRECIO_HAIRCUT', 'MONTO', 'ISIN'
+        ]
+    else:
+        # B a K → 10 columnas
+        nombres = [
+            'FECHA_LIQ', 'BRANCH', 'CONTRAPARTE', 'ENVIO_RECEPCION',
+            'EMISION', 'TITULOS', 'HAIRCUT', 'PRECIO_MERCADO',
+            'PRECIO_HAIRCUT', 'MONTO'
+        ]
+
+    # Ajustar longitud
+    df.columns = nombres[:len(df.columns)]
+
+    # Conservar solo columnas necesarias
+    cols_necesarias = [
+        'FECHA_LIQ', 'BRANCH', 'CONTRAPARTE', 'ENVIO_RECEPCION',
+        'EMISION', 'TITULOS', 'HAIRCUT', 'ISIN'
+    ]
+    for col in cols_necesarias:
+        if col not in df.columns:
+            df[col] = None
+
+    df = df[[c for c in cols_necesarias if c in df.columns]]
 
     # Normalizar texto
     df['EMISION'] = df['EMISION'].apply(normalize_text)
     df['CONTRAPARTE'] = df['CONTRAPARTE'].apply(normalize_text)
+
+    # Convertir a numérico
+    df['TITULOS'] = pd.to_numeric(df['TITULOS'], errors='coerce')
+    df['HAIRCUT'] = pd.to_numeric(df['HAIRCUT'], errors='coerce')
 
     df['ID_ORIGEN'] = ORIGEN_ID[origen]
 
