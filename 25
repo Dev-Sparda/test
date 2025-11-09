@@ -1,0 +1,35 @@
+def validate_and_load_movimientos(df: pd.DataFrame, origen: str):
+    from utils import normalize_text
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Normalizar contrapartes del archivo
+    df["CONTRAPARTE"] = df["CONTRAPARTE"].apply(normalize_text)
+
+    # Cargar y normalizar catálogo
+    df_existing = pd.read_sql("SELECT CONTRAPARTE FROM CAT_CONTRAPARTES", conn)
+    df_existing["CONTRAPARTE"] = df_existing["CONTRAPARTE"].apply(normalize_text)
+
+    # Identificar nuevas
+    mask_nuevas = ~df["CONTRAPARTE"].isin(df_existing["CONTRAPARTE"])
+    nuevas_contrapartes = df.loc[mask_nuevas, "CONTRAPARTE"].drop_duplicates().tolist()
+
+    # Eliminar valores vacíos o 'nan'
+    nuevas_contrapartes = [cp for cp in nuevas_contrapartes if cp and cp.lower() != 'nan']
+
+    for cp in nuevas_contrapartes:
+        if messagebox.askyesno("Contraparte no encontrada",
+                               f"No se encontró la contraparte '{cp}' en el catálogo.\n¿Desea darla de alta?"):
+            clave_banxico = messagebox.askstring("Clave Banxico", f"Ingrese CLAVE_BANXICO para '{cp}':")
+            cursor.execute("INSERT INTO CAT_CONTRAPARTES (CONTRAPARTE, CLAVE_BANXICO) VALUES (?, ?)",
+                           (cp, clave_banxico or None))
+
+    # Filtrar fechas nuevas (incremental)
+    latest = pd.read_sql("SELECT MAX(FECHA_LIQ) as max_date FROM MOVIMIENTOS", conn).iloc[0]['max_date']
+    if latest:
+        df = df[pd.to_datetime(df['FECHA_LIQ']) > pd.to_datetime(latest)]
+
+    # Guardar
+    df.to_sql('MOVIMIENTOS', conn, if_exists='append', index=False, method='multi')
+    conn.commit()
+    conn.close()
