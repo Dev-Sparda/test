@@ -1,35 +1,35 @@
-def validate_and_load_movimientos(df: pd.DataFrame, origen: str):
-    from utils import normalize_text
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+def load_excel_file(filepath: str, origen: str):
+    # ... (engine, usecols, skiprows) ...
 
-    # Normalizar contrapartes del archivo
-    df["CONTRAPARTE"] = df["CONTRAPARTE"].apply(normalize_text)
+    df = pd.read_excel(
+        filepath,
+        sheet_name='Movimientos',
+        skiprows=skiprows,
+        usecols=usecols,
+        engine=engine
+    )
 
-    # Cargar y normalizar catálogo
-    df_existing = pd.read_sql("SELECT CONTRAPARTE FROM CAT_CONTRAPARTES", conn)
-    df_existing["CONTRAPARTE"] = df_existing["CONTRAPARTE"].apply(normalize_text)
+    # Mapeo de columnas → incluir HAIRCUT y # títulos
+    col_map = {
+        'Fecha Liq.': 'FECHA_LIQ',
+        'Branch': 'BRANCH',
+        'Contraparte': 'CONTRAPARTE',
+        'Envío / Recepción': 'ENVIO_RECEPCION',
+        'Emisión': 'EMISION',
+        '# títulos': 'TITULOS',      # <-- Aquí estaba el nombre real
+        'Haircut': 'HAIRCUT',        # <-- Conservar Haircut
+        'ISIN': 'ISIN'
+    }
+    df.rename(columns=col_map, inplace=True)
 
-    # Identificar nuevas
-    mask_nuevas = ~df["CONTRAPARTE"].isin(df_existing["CONTRAPARTE"])
-    nuevas_contrapartes = df.loc[mask_nuevas, "CONTRAPARTE"].drop_duplicates().tolist()
+    # Eliminar columnas que no se usan (Monto, etc.)
+    cols_to_drop = ['Precio Mercado', 'Precio c/Haricut', 'Monto $', 'Monto $ USD', 'Monto $ MXN']
+    df.drop(columns=[c for c in cols_to_drop if c in df.columns], inplace=True)
 
-    # Eliminar valores vacíos o 'nan'
-    nuevas_contrapartes = [cp for cp in nuevas_contrapartes if cp and cp.lower() != 'nan']
+    # Normalizar texto
+    df['EMISION'] = df['EMISION'].apply(normalize_text)
+    df['CONTRAPARTE'] = df['CONTRAPARTE'].apply(normalize_text)
 
-    for cp in nuevas_contrapartes:
-        if messagebox.askyesno("Contraparte no encontrada",
-                               f"No se encontró la contraparte '{cp}' en el catálogo.\n¿Desea darla de alta?"):
-            clave_banxico = messagebox.askstring("Clave Banxico", f"Ingrese CLAVE_BANXICO para '{cp}':")
-            cursor.execute("INSERT INTO CAT_CONTRAPARTES (CONTRAPARTE, CLAVE_BANXICO) VALUES (?, ?)",
-                           (cp, clave_banxico or None))
+    df['ID_ORIGEN'] = ORIGEN_ID[origen]
 
-    # Filtrar fechas nuevas (incremental)
-    latest = pd.read_sql("SELECT MAX(FECHA_LIQ) as max_date FROM MOVIMIENTOS", conn).iloc[0]['max_date']
-    if latest:
-        df = df[pd.to_datetime(df['FECHA_LIQ']) > pd.to_datetime(latest)]
-
-    # Guardar
-    df.to_sql('MOVIMIENTOS', conn, if_exists='append', index=False, method='multi')
-    conn.commit()
-    conn.close()
+    return df
