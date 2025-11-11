@@ -1,3 +1,21 @@
+Parte 1 middle office
+quitar las columnas precio precio con haircut monto, solo conservar 'Haircut'
+cargar el catalogo de PAPEL CLAVE ISIN
+1. antes de cargar cambiar el nombre de MetLife
+2. cambiar M bonos por GOBFED
+3. validación suma agrupada por columnas D y F para sacar el numero de títulos
+4. sacar la tabla con los totales del paso 3 contraparte, emisión y total
+5. a partir de la tabla del paso 4 generar la tabla con el layout: Clave Banxico, Contraparte, Emisión, Titulos, RECIBE O ENTREGA949 dejar layout como archivos de carga
+
+6.separar en 2 tablas los extrajeros y lo mexicanos lo podemos identificar por la estructura de la emisión ya que los extranjeros vienen con IC y lo mexicanos son a 2 posiciones
+7. obtener el aforo desde %Y-%m-%d INFORME BONOS.xlsx(Cuenta con el mismo problema de M bonos en la columna G), la columna que nos interesa es Haircut vamos a hacer el cruce por la clave compuesta: - Saldo inicial (tit.) & Name contra nuestra tabla usando la llave compuesta:Titulos y emision
+8. el paso anterior no traera todos los aforos, en la tabla de mexicanos los que no se encontraron en el paso anterior esos los teiene qie proporcionar el equipo de colaterales para que se introduzcan a mano (Ojo son los de JP MORGAN)
+9.los extranjores no encontrados en el insumo de INFORME BONOS se tomará de la tabla cargada CSA buscaremos la columna haircut (mas reciente), coincidiendo las columnas emision y contraparte esta en decimales, hay que ponerlo en porcentaje
+10. para sacar el precio se usa el insumo de vector pip ultimo dia de la semana para la moneda nacional usaremos la clave: emisora ' ' serie,(Ojo en emisiora cambiar BONOS por GOBFED) cruzando contra la Emision de nuestra tabla recupoeraremos el valor de la columna precio sucio
+11. habra algunos precios faltantes estos son los que traen el IC en la emisora, para obtener estos hay que buscar la emisora y la serie del IC, para esto tomaremos el insumo que manda uanma por correo VMDSantander%Y%m%d.zip/csv aqui en la columna 3 tenemos la emisora y en la 4 la serie y con esto se puede buscar en el vector pip,el precio esta en pesos y hay que ponerlo en dolares, el tipo de cambio tambien se saca del vector pip en la columna serie aparece como:V48 con la emisora MXPUSD usando la culumna precio limpio ya solo seria divir el precio del vector pip por el TC 
+
+
+
 def load_excel_file(filepath: str, origen: str):
     if filepath.lower().endswith('.xls'):
         engine = 'xlrd'
