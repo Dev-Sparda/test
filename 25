@@ -37,40 +37,7 @@ def run_pipeline(root_window):
         df_agrupado = df_agrupado[df_agrupado['TITULOS'] != 0].copy()
 
 
-import requests
-from bs4 import BeautifulSoup
-import time
-import pandas as pd
 
-def scrape_yahoo_finance_safe(ticker):
-    """
-    Ejemplo MUY básico y conservador
-    """
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
-    
-    url = f"https://finance.yahoo.com/quote/{ticker}"
-    
-    try:
-        # Delay conservador
-        time.sleep(2)
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # Extraer precio actual (ejemplo)
-        price_element = soup.find('fin-streamer', {'data-field': 'regularMarketPrice'})
-        price = price_element.text if price_element else "No encontrado"
-        
-        return {'ticker': ticker, 'price': price}
-        
-    except Exception as e:
-        return {'ticker': ticker, 'error': str(e)}
-
-# Uso MUY conservador
-# result = scrape_yahoo_finance_safe("AAPL")
-# print(result)
         if df_agrupado.empty:
             messagebox.showinfo("Información", "No hay posiciones abiertas (todo neteado a cero).")
             return
@@ -88,4 +55,21 @@ def scrape_yahoo_finance_safe(ticker):
         total_titulos = df_final['TITULOS'].sum()
         messagebox.showinfo("Total", f"Suma total de títulos (neto): {total_titulos:,}")
 
+
+def fmp_data(symbol, api_key="demo"):
+    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}"
+    params = {'apikey': api_key}
+    
+    response = requests.get(url, params=params)
+    data = response.json()
+    
+    if 'historical' in data:
+        df = pd.DataFrame(data['historical'])
+        df['date'] = pd.to_datetime(df['date'])
+        df.set_index('date', inplace=True)
+        return df
+    return None
+
+# Probar
+# data = fmp_data("AAPL")
 n0qQDqT6FbpjjHO9JZoDh8wssHuDwIHL
