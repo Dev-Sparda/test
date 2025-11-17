@@ -57,51 +57,66 @@ def run_pipeline(root_window):
 
 
 
-import requests
 import pandas as pd
-import urllib3
+import requests
+import json
 
-# Desactivar warnings de SSL
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-def alpha_vantage_sin_ssl(symbol="IBM"):
+def yahoo_finance_directo(symbol="AAPL"):
     """
-    Alpha Vantage sin verificación SSL
+    Yahoo Finance directo - sin librerías externas
     """
     try:
-        url = "https://www.alphavantage.co/query"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
         params = {
-            'function': 'TIME_SERIES_DAILY',
-            'symbol': symbol,
-            'apikey': 'demo',
-            'outputsize': 'compact'
+            'range': '1mo',
+            'interval': '1d'
         }
         
-        print(f"📡 Obteniendo {symbol} (sin verificación SSL)...")
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
         
-        # verify=False desactiva la verificación SSL
-        response = requests.get(url, params=params, timeout=10, verify=False)
-        data = response.json()
+        print(f"📡 Conectando a Yahoo Finance para {symbol}...")
+        response = requests.get(url, params=params, headers=headers, timeout=15, verify=False)
         
-        if "Time Series (Daily)" in data:
-            time_series = data["Time Series (Daily)"]
-            df = pd.DataFrame.from_dict(time_series, orient='index')
-            df = df.astype(float)
-            df.columns = ['open', 'high', 'low', 'close', 'volume']
-            df.index = pd.to_datetime(df.index)
-            df = df.sort_index(ascending=False)
+        if response.status_code == 200:
+            data = response.json()
             
-            print(f"✅ {symbol}: {len(df)} registros obtenidos")
-            return df
+            if 'chart' in data and 'result' in data['chart']:
+                result = data['chart']['result'][0]
+                
+                # Extraer timestamps y precios
+                timestamps = result['timestamp']
+                quotes = result['indicators']['quote'][0]
+                
+                # Crear DataFrame
+                df = pd.DataFrame({
+                    'date': pd.to_datetime(timestamps, unit='s'),
+                    'open': quotes['open'],
+                    'high': quotes['high'], 
+                    'low': quotes['low'],
+                    'close': quotes['close'],
+                    'volume': quotes['volume']
+                })
+                
+                df.set_index('date', inplace=True)
+                df = df.dropna()  # Remover valores nulos
+                df = df.sort_index(ascending=False)
+                
+                print(f"✅ Yahoo Finance: {len(df)} registros de {symbol}")
+                return df
+            else:
+                print("❌ No se pudieron extraer datos del response")
+                return None
         else:
-            print("❌ No se encontraron datos")
+            print(f"❌ Error HTTP: {response.status_code}")
             return None
             
     except Exception as e:
         print(f"💥 Error: {e}")
         return None
 
-# Probar
-df = alpha_vantage_sin_ssl("IBM")
-if df is not None:
-    print(df.head())
+# Probar Yahoo Finance directo
+df_yahoo = yahoo_finance_directo("AAPL")
+if df_yahoo is not None:
+    print(df_yahoo.head())
