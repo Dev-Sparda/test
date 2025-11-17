@@ -55,73 +55,45 @@ def run_pipeline(root_window):
         total_titulos = df_final['TITULOS'].sum()
         messagebox.showinfo("Total", f"Suma total de títulos (neto): {total_titulos:,}")
 
-import requests
-import pandas as pd
-from datetime import datetime
-
-def fmp_data_mes_actual(symbol, api_key="demo"):
+def alpha_vantage_simple(symbol="IBM"):
     """
-    Obtiene datos históricos del mes actual de Financial Modeling Prep
+    Alpha Vantage - suele ser más confiable
     """
     try:
-        url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}"
-        params = {'apikey': api_key}
+        url = "https://www.alphavantage.co/query"
+        params = {
+            'function': 'TIME_SERIES_DAILY',
+            'symbol': symbol,
+            'apikey': 'demo',  # Key demo
+            'outputsize': 'compact'
+        }
         
-        print(f"📡 Descargando datos de {symbol}...")
+        print(f"🔍 Probando Alpha Vantage con {symbol}...")
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
         
-        if 'historical' in data and data['historical']:
-            df = pd.DataFrame(data['historical'])
-            df['date'] = pd.to_datetime(df['date'])
-            df.set_index('date', inplace=True)
-            
-            # Filtrar solo el mes actual
-            mes_actual = datetime.now().month
-            año_actual = datetime.now().year
-            
-            df_mes_actual = df[
-                (df.index.month == mes_actual) & 
-                (df.index.year == año_actual)
-            ]
-            
-            print(f"✅ {symbol}: {len(df_mes_actual)} registros del mes actual")
-            return df_mes_actual.sort_index(ascending=False)  # Más reciente primero
-            
+        print("Estructura de respuesta:")
+        print(list(data.keys()))
+        
+        if "Time Series (Daily)" in data:
+            time_series = data["Time Series (Daily)"]
+            df = pd.DataFrame.from_dict(time_series, orient='index')
+            df = df.astype(float)
+            df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+            df.index = pd.to_datetime(df.index)
+            print(f"✅ Datos obtenidos: {len(df)} registros")
+            return df.sort_index(ascending=False)
         else:
-            print(f"❌ No hay datos para {symbol}")
+            print("❌ No se encontraron datos")
+            if "Error Message" in data:
+                print(f"Error: {data['Error Message']}")
+            if "Note" in data:
+                print(f"Nota: {data['Note']}")
             return None
             
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         return None
 
-# Probar con múltiples acciones
-def obtener_datos_multiples(symbols):
-    """
-    Obtiene datos del mes actual para múltiples símbolos
-    """
-    datos = {}
-    
-    for symbol in symbols:
-        df = fmp_data_mes_actual(symbol)
-        if df is not None:
-            datos[symbol] = df
-    
-    return datos
-
-# Ejemplo de uso
-if __name__ == "__main__":
-    # Lista de acciones que te interesen
-    mis_acciones = ["AAPL", "MSFT", "GOOGL", "TSLA", "META"]
-    
-    print("🚀 Obteniendo datos del mes actual...")
-    datos_mes = obtener_datos_multiples(mis_acciones)
-    
-    print(f"\n📊 Resumen:")
-    print(f"Acciones obtenidas: {list(datos_mes.keys())}")
-    
-    # Mostrar datos de una acción como ejemplo
-    if "AAPL" in datos_mes:
-        print(f"\n📈 Datos de AAPL (mes actual):")
-        print(datos_mes["AAPL"][['open', 'high', 'low', 'close', 'volume']])
+# Probar Alpha Vantage
+# df_av = alpha_vantage_simple("AAPL")
