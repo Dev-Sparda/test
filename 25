@@ -36,6 +36,41 @@ def run_pipeline(root_window):
         # 3. Eliminar posiciones neteadas a cero
         df_agrupado = df_agrupado[df_agrupado['TITULOS'] != 0].copy()
 
+
+import requests
+from bs4 import BeautifulSoup
+import time
+import pandas as pd
+
+def scrape_yahoo_finance_safe(ticker):
+    """
+    Ejemplo MUY básico y conservador
+    """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+    
+    url = f"https://finance.yahoo.com/quote/{ticker}"
+    
+    try:
+        # Delay conservador
+        time.sleep(2)
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Extraer precio actual (ejemplo)
+        price_element = soup.find('fin-streamer', {'data-field': 'regularMarketPrice'})
+        price = price_element.text if price_element else "No encontrado"
+        
+        return {'ticker': ticker, 'price': price}
+        
+    except Exception as e:
+        return {'ticker': ticker, 'error': str(e)}
+
+# Uso MUY conservador
+# result = scrape_yahoo_finance_safe("AAPL")
+# print(result)
         if df_agrupado.empty:
             messagebox.showinfo("Información", "No hay posiciones abiertas (todo neteado a cero).")
             return
