@@ -59,56 +59,49 @@ def run_pipeline(root_window):
 
 import requests
 import pandas as pd
+import urllib3
 
-def alpha_vantage_datos(symbol="IBM"):
+# Desactivar warnings de SSL
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+def alpha_vantage_sin_ssl(symbol="IBM"):
     """
-    Alpha Vantage - FUNCIONA con API key demo
+    Alpha Vantage sin verificación SSL
     """
     try:
         url = "https://www.alphavantage.co/query"
         params = {
             'function': 'TIME_SERIES_DAILY',
             'symbol': symbol,
-            'apikey': 'demo',  # Key demo que SÍ funciona
-            'outputsize': 'compact'  # 'compact' = últimos 100 días
+            'apikey': 'demo',
+            'outputsize': 'compact'
         }
         
-        print(f"📡 Obteniendo datos de {symbol} desde Alpha Vantage...")
-        response = requests.get(url, params=params, timeout=10)
-        data = response.json()
+        print(f"📡 Obteniendo {symbol} (sin verificación SSL)...")
         
-        print(f"✅ Status: {response.status_code}")
-        print(f"📊 Estructura: {list(data.keys())}")
+        # verify=False desactiva la verificación SSL
+        response = requests.get(url, params=params, timeout=10, verify=False)
+        data = response.json()
         
         if "Time Series (Daily)" in data:
             time_series = data["Time Series (Daily)"]
             df = pd.DataFrame.from_dict(time_series, orient='index')
-            
-            # Convertir tipos de datos
             df = df.astype(float)
             df.columns = ['open', 'high', 'low', 'close', 'volume']
             df.index = pd.to_datetime(df.index)
-            
-            # Ordenar por fecha (más reciente primero)
             df = df.sort_index(ascending=False)
             
             print(f"✅ {symbol}: {len(df)} registros obtenidos")
             return df
-            
         else:
-            print("❌ No se encontraron datos diarios")
-            if "Error Message" in data:
-                print(f"Error: {data['Error Message']}")
-            if "Note" in data:
-                print(f"Nota: {data['Note'][:100]}...")
+            print("❌ No se encontraron datos")
             return None
             
     except Exception as e:
         print(f"💥 Error: {e}")
         return None
 
-# Probar Alpha Vantage
-df_ibm = alpha_vantage_datos("IBM")
-if df_ibm is not None:
-    print("\n📈 Datos de IBM (primeras 5 filas):")
-    print(df_ibm.head())
+# Probar
+df = alpha_vantage_sin_ssl("IBM")
+if df is not None:
+    print(df.head())
