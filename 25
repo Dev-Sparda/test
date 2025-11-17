@@ -55,45 +55,53 @@ def run_pipeline(root_window):
         total_titulos = df_final['TITULOS'].sum()
         messagebox.showinfo("Total", f"Suma total de títulos (neto): {total_titulos:,}")
 
-def alpha_vantage_simple(symbol="IBM"):
+
+
+import requests
+import pandas as pd
+import json
+
+def debug_fmp_data(symbol, api_key="demo"):
     """
-    Alpha Vantage - suele ser más confiable
+    Versión con debug para ver qué está pasando
     """
     try:
-        url = "https://www.alphavantage.co/query"
-        params = {
-            'function': 'TIME_SERIES_DAILY',
-            'symbol': symbol,
-            'apikey': 'demo',  # Key demo
-            'outputsize': 'compact'
-        }
+        url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}"
+        params = {'apikey': api_key}
         
-        print(f"🔍 Probando Alpha Vantage con {symbol}...")
+        print(f"🔍 Debugging {symbol}...")
+        print(f"URL: {url}")
+        
         response = requests.get(url, params=params, timeout=10)
+        print(f"Status Code: {response.status_code}")
+        
+        # Ver el contenido crudo de la respuesta
         data = response.json()
+        print("Respuesta completa:")
+        print(json.dumps(data, indent=2)[:500] + "...")  # Primeros 500 caracteres
         
-        print("Estructura de respuesta:")
-        print(list(data.keys()))
-        
-        if "Time Series (Daily)" in data:
-            time_series = data["Time Series (Daily)"]
-            df = pd.DataFrame.from_dict(time_series, orient='index')
-            df = df.astype(float)
-            df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-            df.index = pd.to_datetime(df.index)
-            print(f"✅ Datos obtenidos: {len(df)} registros")
-            return df.sort_index(ascending=False)
+        # Analizar la estructura de la respuesta
+        if 'historical' in data:
+            if data['historical']:
+                print(f"✅ Hay {len(data['historical'])} registros históricos")
+                df = pd.DataFrame(data['historical'])
+                print(f"Columnas: {list(df.columns)}")
+                return df
+            else:
+                print("❌ 'historical' existe pero está vacío")
         else:
-            print("❌ No se encontraron datos")
-            if "Error Message" in data:
+            print("❌ No existe la key 'historical' en la respuesta")
+            if 'Error Message' in data:
                 print(f"Error: {data['Error Message']}")
-            if "Note" in data:
-                print(f"Nota: {data['Note']}")
-            return None
-            
+            if 'message' in data:
+                print(f"Mensaje: {data['message']}")
+                
+        return None
+        
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"💥 Exception: {e}")
         return None
 
-# Probar Alpha Vantage
-# df_av = alpha_vantage_simple("AAPL")
+# Probar diagnóstico
+print("=== DIAGNÓSTICO FMP ===")
+result = debug_fmp_data("AAPL")
