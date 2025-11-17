@@ -87,3 +87,5 @@ def scrape_yahoo_finance_safe(ticker):
         df_final['TIPO'] = df_final['EMISION'].apply(classify_emision)
         total_titulos = df_final['TITULOS'].sum()
         messagebox.showinfo("Total", f"Suma total de títulos (neto): {total_titulos:,}")
+
+n0qQDqT6FbpjjHO9JZoDh8wssHuDwIHL
