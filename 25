@@ -56,8 +56,132 @@ def run_pipeline(root_window):
         messagebox.showinfo("Total", f"Suma total de títulos (neto): {total_titulos:,}")
 
 
---------------------------------------------->>
-pip_path = filedialog.askopenfilename(
+--------------------------------------------->>>
+import pandas as pd
+import sqlite3
+from tkinter import filedialog, messagebox, simpledialog
+from utils import normalize_text, classify_emision, extract_date_from_pip_filename
+
+def run_pipeline(root_window):
+    """
+    Ejecuta todo el pipeline de generación de reportes.
+    root_window: necesario para filedialog desde una app CTk.
+    """
+    conn = sqlite3.connect(DB_PATH)
+
+    try:
+        # 1. Cargar todos los movimientos y unir con catálogo para obtener CLAVE_BANXICO
+        df_mov = pd.read_sql("""
+            SELECT 
+                m.CONTRAPARTE,
+                m.EMISION,
+                m.TITULOS,
+                m.ISIN,
+                m.ENVIO_RECEPCION,
+                c.CLAVE_BANXICO,
+                o.NOMBRE AS ORIGEN_NOMBRE
+            FROM MOVIMIENTOS m
+            LEFT JOIN CAT_CONTRAPARTES c ON m.CONTRAPARTE = c.CONTRAPARTE
+            JOIN ORIGEN o ON m.ID_ORIGEN = o.ID_ORIGEN
+        """, conn)
+
+        if df_mov.empty:
+            messagebox.showwarning("Advertencia", "No hay movimientos cargados.")
+            return
+
+        # Asegurar que TITULOS sea numérico
+        df_mov['TITULOS'] = pd.to_numeric(df_mov['TITULOS'], errors='coerce')
+
+        # 2. Agrupar por CLAVE_BANXICO + EMISION (neteo por entidad)
+        df_agrupado = df_mov.groupby(['CLAVE_BANXICO', 'EMISION'], as_index=False).agg({
+            'TITULOS': 'sum',
+            'ISIN': 'first',
+            'ENVIO_RECEPCION': 'first',
+            'ORIGEN_NOMBRE': lambda x: ', '.join(x.dropna().unique())
+        })
+
+        # 3. Eliminar posiciones neteadas a cero
+        df_agrupado = df_agrupado[df_agrupado['TITULOS'] != 0].copy()
+
+        if df_agrupado.empty:
+            messagebox.showinfo("Información", "No hay posiciones abiertas (todo neteado a cero).")
+            return
+
+        # 4. Volver a unir con CAT_CONTRAPARTES para recuperar CONTRAPARTE
+        df_final = df_agrupado.merge(
+            df_mov[['CLAVE_BANXICO', 'CONTRAPARTE']].drop_duplicates(),
+            on='CLAVE_BANXICO',
+            how='left'
+        )
+
+        # 5. Clasificar como nacional o extranjero
+        df_final['TIPO'] = df_final['EMISION'].apply(classify_emision)
+        total_titulos = df_final['TITULOS'].sum()
+        messagebox.showinfo("Total", f"Suma total de títulos (neto): {total_titulos:,}")
+
+        # 6. Enriquecer con catálogos
+        cat_isin = pd.read_sql("SELECT PAPEL, CLAVE_ISIN FROM CAT_ISIN", conn)
+        df_final = df_final.merge(cat_isin, left_on='EMISION', right_on='PAPEL', how='left')
+
+        # 7. Cargar INFORME BONOS para AFORO
+        bonos_path = filedialog.askopenfilename(
+            parent=root_window,
+            title="Selecciona el archivo 'INFORME BONOS'",
+            filetypes=[("Archivos Excel", "*.xlsx *.xlsm *.xls")]
+        )
+        if not bonos_path:
+            raise Exception("Archivo de INFORME BONOS no seleccionado.")
+
+        df_bonos = pd.read_excel(bonos_path, sheet_name=0)
+        df_bonos.rename(columns={'Name': 'EMISION', 'Haircut': 'AFORO'}, inplace=True)
+        df_bonos['EMISION'] = df_bonos['EMISION'].apply(normalize_text)
+        df_bonos['CLAVE_AFORO'] = "-" + df_bonos['Saldo inicial (tit.)'].astype(str) + " " + df_bonos['EMISION']
+
+        df_final['CLAVE_AFORO'] = df_final['TITULOS'].astype(str) + " " + df_final['EMISION']
+        df_final = df_final.merge(
+            df_bonos[['CLAVE_AFORO', 'AFORO']],
+            on='CLAVE_AFORO',
+            how='left'
+        )
+
+        # 8. Completar AFORO faltante para EXTRANJEROS usando CSA
+        missing_extr = df_final[
+            (df_final['TIPO'] == 'EXTRANJERO') & (df_final['AFORO'].isna())
+        ][['CONTRAPARTE', 'EMISION']]
+
+        if not missing_extr.empty:
+            df_csa = pd.read_sql("""
+                SELECT CONTRAPARTE, EMISION, HAIRCUT, FECHA_LIQ
+                FROM MOVIMIENTOS
+                WHERE ID_ORIGEN = 1
+            """, conn)
+            df_csa['EMISION'] = df_csa['EMISION'].apply(normalize_text)
+            df_csa = df_csa.sort_values('FECHA_LIQ', ascending=False)
+            df_csa_dedup = df_csa.drop_duplicates(subset=['CONTRAPARTE', 'EMISION'])
+            df_csa_dedup['HAIRCUT'] = df_csa_dedup['HAIRCUT'] * 100  # 0.900 → 9.0
+
+            missing_extr = missing_extr.merge(
+                df_csa_dedup[['CONTRAPARTE', 'EMISION', 'HAIRCUT']],
+                on=['CONTRAPARTE', 'EMISION'],
+                how='left'
+            )
+
+            for idx, row in missing_extr.iterrows():
+                mask = (df_final['CONTRAPARTE'] == row['CONTRAPARTE']) & \
+                       (df_final['EMISION'] == row['EMISION'])
+                df_final.loc[mask, 'AFORO'] = row['HAIRCUT']
+
+        # Guardar pendientes NACIONALES sin AFORO
+        pendientes_nac = df_final[
+            (df_final['TIPO'] == 'NACIONAL') & (df_final['AFORO'].isna())
+        ][['CONTRAPARTE', 'EMISION', 'TITULOS']]
+        if not pendientes_nac.empty:
+            output_path = os.path.join(os.path.dirname(bonos_path), "pendientes_por_confirmar_colaterales_aforo.xlsx")
+            pendientes_nac.to_excel(output_path, index=False)
+            messagebox.showinfo("Pendientes", f"Archivo de pendientes nacional guardado:\n{output_path}")
+
+        # 9. Cargar Vector PIP (con skiprows=[0,2])
+        pip_path = filedialog.askopenfilename(
             parent=root_window,
             title="Selecciona el archivo Vector PIP",
             filetypes=[("Archivos Excel", "*.xlsx *.xlsm *.xls")]
@@ -230,3 +354,10 @@ pip_path = filedialog.askopenfilename(
         extranjero.to_sql('REPORTE_EXTRANJERO', conn, if_exists='replace', index=False)
 
         messagebox.showinfo("Éxito", "Reportes generados y guardados en la base de datos.")
+
+    except Exception as e:
+        messagebox.showerror("Error en pipeline", str(e))
+        raise e
+    finally:
+        conn.close()
+
