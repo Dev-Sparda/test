@@ -56,67 +56,76 @@ def run_pipeline(root_window):
         messagebox.showinfo("Total", f"Suma total de títulos (neto): {total_titulos:,}")
 
 
+---------
+        # Cargar Vector PIP
+        pip_path = filedialog.askopenfilename(
+            parent=root_window,
+            title="Selecciona el archivo Vector PIP",
+            filetypes=[("Archivos Excel", "*.xlsx *.xlsm *.xls")]
+        )
+        if not pip_path:
+            raise Exception("Archivo Vector PIP no seleccionado.")
 
-import pandas as pd
-import requests
-import json
+        pip_date = extract_date_from_pip_filename(os.path.basename(pip_path))
+        if not pip_date:
+            raise Exception("No se pudo extraer la fecha del archivo PIP. Asegúrate del formato: PIPYYYYMMDDM.xls")
 
-def yahoo_finance_directo(symbol="AAPL"):
-    """
-    Yahoo Finance directo - sin librerías externas
-    """
-    try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        params = {
-            'range': '1mo',
-            'interval': '1d'
-        }
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
-        print(f"📡 Conectando a Yahoo Finance para {symbol}...")
-        response = requests.get(url, params=params, headers=headers, timeout=15, verify=False)
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            if 'chart' in data and 'result' in data['chart']:
-                result = data['chart']['result'][0]
-                
-                # Extraer timestamps y precios
-                timestamps = result['timestamp']
-                quotes = result['indicators']['quote'][0]
-                
-                # Crear DataFrame
-                df = pd.DataFrame({
-                    'date': pd.to_datetime(timestamps, unit='s'),
-                    'open': quotes['open'],
-                    'high': quotes['high'], 
-                    'low': quotes['low'],
-                    'close': quotes['close'],
-                    'volume': quotes['volume']
-                })
-                
-                df.set_index('date', inplace=True)
-                df = df.dropna()  # Remover valores nulos
-                df = df.sort_index(ascending=False)
-                
-                print(f"✅ Yahoo Finance: {len(df)} registros de {symbol}")
-                return df
-            else:
-                print("❌ No se pudieron extraer datos del response")
-                return None
-        else:
-            print(f"❌ Error HTTP: {response.status_code}")
-            return None
-            
-    except Exception as e:
-        print(f"💥 Error: {e}")
-        return None
+        sheet_name = f"{pip_date}_MD"
+        df_pip = pd.read_excel(pip_path, sheet_name=sheet_name)
+        df_pip.rename(columns={'Emisora': 'EMISORA', 'Serie': 'SERIE', 'Tipo Valor': 'TIPO_VALOR', 'Precio Sucio': 'PRECIO_SUCIO'}, inplace=True)
+        df_pip['EMISORA'] = df_pip['EMISORA'].apply(normalize_text)
 
-# Probar Yahoo Finance directo
-df_yahoo = yahoo_finance_directo("AAPL")
-if df_yahoo is not None:
-    print(df_yahoo.head())
+        # Extraer solo las emisoras que necesitamos de df_final
+        emisoras_necesarias = set(df_final['EMISION'].str.split(' ', n=1, expand=True)[0].apply(normalize_text).unique())
+
+        # Filtrar df_pip a solo esas emisoras
+        df_pip_filtrado = df_pip[df_pip['EMISORA'].apply(normalize_text).isin(emisoras_necesarias)].copy()
+
+        # Cargar catálogo de TIPO_VALOR
+        df_tipos = pd.read_sql("SELECT EMISORA, TIPO_VALOR FROM CAT_TIPO_VALOR", conn)
+        df_tipos['EMISORA'] = df_tipos['EMISORA'].apply(normalize_text)
+
+        # Detectar emisoras nuevas en df_pip_filtrado
+        emisoras_pip = set(df_pip_filtrado['EMISORA'].apply(normalize_text).unique())
+        emisoras_cat = set(df_tipos['EMISORA'].apply(normalize_text).unique())
+        nuevas_emisoras = emisoras_pip - emisoras_cat
+
+        for emisora in nuevas_emisoras:
+            if messagebox.askyesno("Emisora no encontrada",
+                                   f"No se encontró la emisora '{emisora}' en el catálogo de Tipo Valor.\n¿Desea darla de alta?"):
+                tipo_valor = simpledialog.askstring("Tipo Valor", f"Ingrese TIPO_VALOR para '{emisora}':")
+                if tipo_valor is None:
+                    messagebox.showwarning("Cancelado", f"No se dio de alta el tipo de valor para '{emisora}'.")
+                    continue
+
+                cursor.execute("INSERT INTO CAT_TIPO_VALOR (EMISORA, TIPO_VALOR) VALUES (?, ?)",
+                               (str(emisora), str(tipo_valor)))
+
+        # Recargar catálogo actualizado
+        df_tipos = pd.read_sql("SELECT EMISORA, TIPO_VALOR FROM CAT_TIPO_VALOR", conn)
+        df_tipos['EMISORA'] = df_tipos['EMISORA'].apply(normalize_text)
+
+        # Completar TIPO_VALOR en df_pip_filtrado
+        df_pip_filtrado = df_pip_filtrado.merge(df_tipos[['EMISORA', 'TIPO_VALOR']], on='EMISORA', how='left')
+
+        # Crear clave compuesta en df_pip_filtrado
+        df_pip_filtrado['CLAVE_PIP'] = df_pip_filtrado['EMISORA'] + " " + df_pip_filtrado['SERIE'] + " " + df_pip_filtrado['TIPO_VALOR']
+
+        # Extraer EMISORA y SERIE de df_final
+        emision_split = df_final['EMISION'].str.split(' ', n=1, expand=True)
+        df_final['EMISORA_PARA_PIP'] = emision_split[0].apply(normalize_text)
+        df_final['SERIE_PARA_PIP'] = emision_split[1]
+
+        # Obtener TIPO_VALOR para df_final desde catálogo
+        df_final = df_final.merge(df_tipos[['EMISORA', 'TIPO_VALOR']], left_on='EMISORA_PARA_PIP', right_on='EMISORA', how='left', suffixes=('', '_cat'))
+
+        # Crear clave compuesta en df_final
+        df_final['CLAVE_PARA_PIP'] = df_final['EMISORA_PARA_PIP'] + " " + df_final['SERIE_PARA_PIP'] + " " + df_final['TIPO_VALOR']
+
+        # Cruzar con df_pip_filtrado
+        df_final = df_final.merge(
+            df_pip_filtrado[['CLAVE_PIP', 'PRECIO_SUCIO']],
+            left_on='CLAVE_PARA_PIP',
+            right_on='CLAVE_PIP',
+            how='left'
+        )
