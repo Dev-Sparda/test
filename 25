@@ -56,7 +56,7 @@ def run_pipeline(root_window):
         messagebox.showinfo("Total", f"Suma total de títulos (neto): {total_titulos:,}")
 
 
----------
+--------------------------------------------->
         # Cargar Vector PIP
         pip_path = filedialog.askopenfilename(
             parent=root_window,
@@ -75,11 +75,16 @@ def run_pipeline(root_window):
         df_pip.rename(columns={'Emisora': 'EMISORA', 'Serie': 'SERIE', 'Tipo Valor': 'TIPO_VALOR', 'Precio Sucio': 'PRECIO_SUCIO'}, inplace=True)
         df_pip['EMISORA'] = df_pip['EMISORA'].apply(normalize_text)
 
-        # Extraer solo las emisoras que necesitamos de df_final
-        emisoras_necesarias = set(df_final['EMISION'].str.split(' ', n=1, expand=True)[0].apply(normalize_text).unique())
+        # Extraer solo las emisoras nacionales que necesitamos de df_final
+        emisoras_nacionales = set(
+            df_final[df_final['TIPO'] == 'NACIONAL']['EMISION']
+            .str.split(' ', n=1, expand=True)[0]
+            .apply(normalize_text)
+            .unique()
+        )
 
         # Filtrar df_pip a solo esas emisoras
-        df_pip_filtrado = df_pip[df_pip['EMISORA'].apply(normalize_text).isin(emisoras_necesarias)].copy()
+        df_pip_filtrado = df_pip[df_pip['EMISORA'].apply(normalize_text).isin(emisoras_nacionales)].copy()
 
         # Cargar catálogo de TIPO_VALOR
         df_tipos = pd.read_sql("SELECT EMISORA, TIPO_VALOR FROM CAT_TIPO_VALOR", conn)
@@ -111,27 +116,32 @@ def run_pipeline(root_window):
         # Crear clave compuesta en df_pip_filtrado
         df_pip_filtrado['CLAVE_PIP'] = df_pip_filtrado['EMISORA'] + " " + df_pip_filtrado['SERIE'] + " " + df_pip_filtrado['TIPO_VALOR']
 
-        # Extraer EMISORA y SERIE de df_final
+        # Extraer EMISORA y SERIE de df_final para nacionales
         emision_split = df_final['EMISION'].str.split(' ', n=1, expand=True)
         df_final['EMISORA_PARA_PIP'] = emision_split[0].apply(normalize_text)
         df_final['SERIE_PARA_PIP'] = emision_split[1]
 
         # Obtener TIPO_VALOR para df_final desde catálogo
-        df_final = df_final.merge(df_tipos[['EMISORA', 'TIPO_VALOR']], left_on='EMISORA_PARA_PIP', right_on='EMISORA', how='left', suffixes=('', '_cat'))
+        df_final = df_final.merge(
+            df_tipos[['EMISORA', 'TIPO_VALOR']], 
+            left_on='EMISORA_PARA_PIP', 
+            right_on='EMISORA', 
+            how='left', 
+            suffixes=('', '_cat')
+        )
 
         # Crear clave compuesta en df_final
         df_final['CLAVE_PARA_PIP'] = df_final['EMISORA_PARA_PIP'] + " " + df_final['SERIE_PARA_PIP'] + " " + df_final['TIPO_VALOR']
 
-        # Cruzar con df_pip_filtrado
+        # Cruzar con df_pip_filtrado (solo nacionales)
         df_final = df_final.merge(
             df_pip_filtrado[['CLAVE_PIP', 'PRECIO_SUCIO']],
             left_on='CLAVE_PARA_PIP',
             right_on='CLAVE_PIP',
-            how='left'
+            how='left',
+            suffixes=('', '_pip')
         )
 
-
------
         # Cargar VMDS para precios faltantes (solo extranjeros)
         vmds_path = filedialog.askopenfilename(
             parent=root_window,
@@ -152,7 +162,6 @@ def run_pipeline(root_window):
         mask_sin_precio = df_final['PRECIO_SUCIO'].isna()
         df_sin_precio = df_final[mask_sin_precio].copy()
 
-        # Separar extranjeros (que no tienen espacio en EMISION)
         df_extranjeros_sin_precio = df_sin_precio[df_sin_precio['TIPO'] == 'EXTRANJERO'].copy()
 
         if not df_extranjeros_sin_precio.empty:
@@ -170,7 +179,7 @@ def run_pipeline(root_window):
                 left_on='EMISORA_VMDS',
                 right_on='EMISORA',
                 how='left',
-                suffixes=('', '_cat')
+                suffixes=('', '_cat_vmds')
             )
 
             # Crear clave compuesta para cruce con Vector PIP
@@ -186,10 +195,10 @@ def run_pipeline(root_window):
                 left_on='CLAVE_VMDS_PIP',
                 right_on='CLAVE_PIP',
                 how='left',
-                suffixes=('', '_pip')
+                suffixes=('', '_pip_vmds')
             )
 
             # Actualizar precios en df_final
             for idx, row in df_extranjeros_sin_precio.iterrows():
                 mask = (df_final['EMISION'] == row['EMISION']) & (df_final['TIPO'] == 'EXTRANJERO')
-                df_final.loc[mask, 'PRECIO_SUCIO'] = row['PRECIO_SUCIO']
+                df_final.loc[mask, 'PRECIO_SUCIO'] = row['PRECIO_SUCIO_pip_vmds']
