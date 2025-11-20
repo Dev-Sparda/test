@@ -129,3 +129,67 @@ def run_pipeline(root_window):
             right_on='CLAVE_PIP',
             how='left'
         )
+
+
+-----
+        # Cargar VMDS para precios faltantes (solo extranjeros)
+        vmds_path = filedialog.askopenfilename(
+            parent=root_window,
+            title="Selecciona el archivo VMDS (CSV)",
+            filetypes=[("CSV files", "*.csv")]
+        )
+        if not vmds_path:
+            raise Exception("Archivo VMDS no seleccionado.")
+
+        df_vmds = pd.read_csv(vmds_path, header=None, dtype=str)
+        if df_vmds.shape[1] < 5:
+            raise Exception("El archivo VMDS debe tener al menos 5 columnas.")
+
+        df_vmds.rename(columns={0: 'EMISION_VMDS', 3: 'EMISORA_VMDS', 4: 'SERIE_VMDS'}, inplace=True)
+        df_vmds['EMISORA_VMDS'] = df_vmds['EMISORA_VMDS'].apply(normalize_text)
+
+        # Filtrar filas sin precio en df_final (solo extranjeros que aún no tienen precio)
+        mask_sin_precio = df_final['PRECIO_SUCIO'].isna()
+        df_sin_precio = df_final[mask_sin_precio].copy()
+
+        # Separar extranjeros (que no tienen espacio en EMISION)
+        df_extranjeros_sin_precio = df_sin_precio[df_sin_precio['TIPO'] == 'EXTRANJERO'].copy()
+
+        if not df_extranjeros_sin_precio.empty:
+            # Cruzar con VMDS para obtener EMISORA_VMDS y SERIE_VMDS
+            df_extranjeros_sin_precio = df_extranjeros_sin_precio.merge(
+                df_vmds[['EMISION_VMDS', 'EMISORA_VMDS', 'SERIE_VMDS']],
+                left_on='EMISION',
+                right_on='EMISION_VMDS',
+                how='inner'
+            )
+
+            # Obtener TIPO_VALOR para EMISORA_VMDS desde catálogo
+            df_extranjeros_sin_precio = df_extranjeros_sin_precio.merge(
+                df_tipos[['EMISORA', 'TIPO_VALOR']],  # catálogo actualizado
+                left_on='EMISORA_VMDS',
+                right_on='EMISORA',
+                how='left',
+                suffixes=('', '_cat')
+            )
+
+            # Crear clave compuesta para cruce con Vector PIP
+            df_extranjeros_sin_precio['CLAVE_VMDS_PIP'] = (
+                df_extranjeros_sin_precio['EMISORA_VMDS'] + " " +
+                df_extranjeros_sin_precio['SERIE_VMDS'] + " " +
+                df_extranjeros_sin_precio['TIPO_VALOR']
+            )
+
+            # Cruzar con Vector PIP (ya filtrado y con clave compuesta)
+            df_extranjeros_sin_precio = df_extranjeros_sin_precio.merge(
+                df_pip_filtrado[['CLAVE_PIP', 'PRECIO_SUCIO']],
+                left_on='CLAVE_VMDS_PIP',
+                right_on='CLAVE_PIP',
+                how='left',
+                suffixes=('', '_pip')
+            )
+
+            # Actualizar precios en df_final
+            for idx, row in df_extranjeros_sin_precio.iterrows():
+                mask = (df_final['EMISION'] == row['EMISION']) & (df_final['TIPO'] == 'EXTRANJERO')
+                df_final.loc[mask, 'PRECIO_SUCIO'] = row['PRECIO_SUCIO']
