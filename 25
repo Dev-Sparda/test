@@ -361,3 +361,90 @@ def run_pipeline(root_window):
     finally:
         conn.close()
 
+
+------ app
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
+from etl import run_pipeline, load_calypso_file  # Asegúrate de exportar load_calypso_file
+
+class App(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("Sistema de Colateral")
+        self.geometry("600x500")
+
+        # Inicializar variables para compartir insumos
+        self.df_pip = None
+        self.df_vmds = None
+        self.df_tipos = None
+
+        # Botones de carga de archivos
+        self.button_csa = ctk.CTkButton(self, text="Cargar CSA", command=lambda: self.load_file("CSA"))
+        self.button_csa.pack(pady=5)
+
+        self.button_clear = ctk.CTkButton(self, text="Cargar CLEARSTREAM", command=lambda: self.load_file("CLEARSTREAM"))
+        self.button_clear.pack(pady=5)
+
+        self.button_morgan = ctk.CTkButton(self, text="Cargar MORGAN", command=lambda: self.load_file("MORGAN"))
+        self.button_morgan.pack(pady=5)
+
+        # Nuevo botón para Calypso
+        self.button_calypso = ctk.CTkButton(self, text="Cargar CALYPSO", command=self.load_calypso)
+        self.button_calypso.pack(pady=10)
+
+        # Botón para ejecutar pipeline
+        self.button_run = ctk.CTkButton(self, text="Generar Reportes", command=self.run_pipeline)
+        self.button_run.pack(pady=10)
+
+    def load_file(self, origen):
+        filepath = filedialog.askopenfilename(filetypes=[("Archivos Excel", "*.xlsx *.xlsm *.xls")])
+        if not filepath:
+            return
+        try:
+            from etl import load_excel_file, validate_and_load_movimientos
+            df = load_excel_file(filepath, origen)
+            validate_and_load_movimientos(df, origen)
+            messagebox.showinfo("Éxito", f"Archivo {origen} cargado correctamente.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al cargar {origen}:\n{str(e)}")
+
+    def run_pipeline(self):
+        try:
+            # Ejecutar el pipeline y capturar los DataFrames reutilizables
+            result = run_pipeline(self)  # Asumiendo que run_pipeline devuelve un dict con los DataFrames
+            if result:
+                self.df_pip = result.get('df_pip')
+                self.df_vmds = result.get('df_vmds')
+                self.df_tipos = result.get('df_tipos')
+                messagebox.showinfo("Éxito", "Pipeline ejecutado y datos de PIP/VMDS guardados para Calypso.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error en pipeline:\n{str(e)}")
+
+    def load_calypso(self):
+        # Verificar que el pipeline ya se haya ejecutado
+        if self.df_pip is None or self.df_vmds is None:
+            messagebox.showwarning(
+                "Insumos no disponibles",
+                "Primero debes ejecutar 'Generar Reportes' para cargar Vector PIP y VMDS."
+            )
+            return
+
+        # Seleccionar archivo de Calypso
+        filepath = filedialog.askopenfilename(
+            title="Selecciona el archivo CALYPSO",
+            filetypes=[("Archivos Excel", "*.xlsx *.xlsm *.xls")]
+        )
+        if not filepath:
+            return
+
+        try:
+            # Llamar a la función de procesamiento de Calypso
+            load_calypso_file(
+                filepath,
+                df_pip=self.df_pip,
+                df_vmds=self.df_vmds,
+                df_tipos=self.df_tipos
+            )
+            messagebox.showinfo("Éxito", "Archivo CALYPSO procesado correctamente.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al procesar Calypso:\n{str(e)}")
