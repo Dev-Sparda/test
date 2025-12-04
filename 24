@@ -508,3 +508,172 @@ if __name__ == "__main__":
     app = App()
     app.mainloop()
 
+
+
+------+--
+import os
+import pandas as pd
+from datetime import datetime
+import getpass
+from pathlib import Path
+
+class ConciliadorFinanciero:
+    def __init__(self):
+        self.usuario = getpass.getuser().lower()
+        self.ruta_base = f"C:/Users/{self.usuario}/Santander Office 365/INFORMACION AUTORIDADES - RR - Area de Trabajo/OPTO/"
+        self.mes = None
+        self.anio = None
+        self.dias_mes = None
+        
+    def obtener_parametros(self):
+        """Solicita mes y año al usuario"""
+        self.mes = input("Ingresar el mes de reporte mm. Ej: 01: ")
+        self.anio = int(input("Ingresar el año de reporte. Ej: 2021: "))
+        self._calcular_dias_mes()
+        
+    def _calcular_dias_mes(self):
+        """Calcula días del mes considerando años bisiestos"""
+        meses_31 = ['01', '03', '05', '07', '08', '10', '12']
+        meses_30 = ['04', '06', '09', '11']
+        
+        if self.mes in meses_31:
+            self.dias_mes = 31
+        elif self.mes in meses_30:
+            self.dias_mes = 30
+        elif self.mes == '02':
+            # Febrero - verificar bisiesto
+            if (self.anio % 4 == 0 and self.anio % 100 != 0) or (self.anio % 400 == 0):
+                self.dias_mes = 29
+            else:
+                self.dias_mes = 28
+    
+    def procesar_caps_floors(self):
+        """Equivalente a BOCaps1()"""
+        nombre_archivo = f"1-Cap-Floor-al-{self.dias_mes}-de-{self._nombre_mes()}-{self.anio}.xlsx"
+        ruta_completa = os.path.join(self.ruta_base, "BO", nombre_archivo)
+        
+        if os.path.exists(ruta_completa):
+            df = pd.read_excel(ruta_completa)
+            # Copiar solo valores (sin fórmulas)
+            df = df.copy()  # Esto crea una copia explícita
+            
+            # Aplicar filtros específicos
+            df_filtrado = self._aplicar_filtros_bo(df)
+            return df_filtrado
+        return None
+    
+    def _aplicar_filtros_bo(self, df):
+        """Aplica las reglas de negocio de BO"""
+        # 1. Eliminar registros con EVENT_STATUS = "Valid - Front Office"
+        if 'EVENT_STATUS' in df.columns:
+            df = df[df['EVENT_STATUS'] != 'Valid - Front Office']
+        
+        # 2. Determinar INSTRUMENTO
+        if 'Counterpart' in df.columns:
+            df['INSTRUMENTO'] = df['Counterpart'].apply(
+                lambda x: 'IMPLICITAS' if 'CLIENTES' in str(x) else 'CAPS'
+            )
+        
+        # 3. Determinar SECCION
+        fecha_corte = datetime(2020, 1, 20)
+        if 'TradeDate' in df.columns:
+            df['SECCION'] = df['TradeDate'].apply(
+                lambda x: 'SECCION II' if pd.to_datetime(x) < fecha_corte else 'SECCION IX'
+            )
+        
+        return df
+    
+    def consolidar_datos(self, *dataframes):
+        """Consolida múltiples dataframes en uno solo"""
+        # Concatenar todos los dataframes
+        df_consolidado = pd.concat(dataframes, ignore_index=True)
+        
+        # Seleccionar solo columnas necesarias (equivalente al Range delete en VBA)
+        columnas_necesarias = [
+            'SECCION', 'INSTRUMENTO', 'REGISTRY', 'Trn# (Internal)', 
+            'Trn# (External)', 'Desc: Complete Trn. Type', 'Counterpart',
+            'Trn.Date', 'SUBYACENTE', 'Date: Period expiry date', 'Clave',
+            'Intencion', 'TIPO', 'REGISTRY ORIGINAL', 'STRIKE', 
+            'SECCION BX', 'MTM', 'C/V', 'Amortizacion', 'TOTAL MTM', 
+            'BROKER FEE', 'TOTAL BROKER FEE'
+        ]
+        
+        # Filtrar columnas existentes
+        columnas_existentes = [col for col in columnas_necesarias if col in df_consolidado.columns]
+        df_final = df_consolidado[columnas_existentes]
+        
+        # Ordenar columnas
+        df_final = df_final.reindex(columns=columnas_necesarias)
+        
+        return df_final
+    
+    def _nombre_mes(self):
+        """Devuelve nombre del mes en español"""
+        meses = {
+            '01': 'Enero', '02': 'Febrero', '03': 'Marzo', '04': 'Abril',
+            '05': 'Mayo', '06': 'Junio', '07': 'Julio', '08': 'Agosto',
+            '09': 'Septiembre', '10': 'Octubre', '11': 'Noviembre', '12': 'Diciembre'
+        }
+        return meses.get(self.mes, self.mes)
+    
+    def generar_reporte(self, df_consolidado):
+        """Genera el archivo final de conciliación"""
+        nombre_salida = f"CONCILIACION SECCION VII {self._nombre_mes()[:3].lower()} {self.anio}.xlsx"
+        ruta_salida = os.path.join(self.ruta_base, "Reportes", nombre_salida)
+        
+        # Crear directorio si no existe
+        os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
+        
+        # Guardar con formato
+        with pd.ExcelWriter(ruta_salida, engine='openpyxl') as writer:
+            df_consolidado.to_excel(writer, sheet_name='Base BO', index=False)
+            
+            # Aplicar formato (similar al VBA)
+            workbook = writer.book
+            worksheet = writer.sheets['Base BO']
+            
+            # Formato de números
+            for column in ['MTM', 'TOTAL MTM', 'BROKER FEE', 'TOTAL BROKER FEE']:
+                if column in df_consolidado.columns:
+                    col_idx = df_consolidado.columns.get_loc(column) + 1
+                    for row in range(2, len(df_consolidado) + 2):
+                        cell = worksheet.cell(row=row, column=col_idx)
+                        cell.number_format = '#,##0.00'
+            
+            # Autoajustar columnas
+            for column_cells in worksheet.columns:
+                length = max(len(str(cell.value)) for cell in column_cells)
+                worksheet.column_dimensions[column_cells[0].column_letter].width = length + 2
+        
+        print(f"Reporte generado: {ruta_salida}")
+        return ruta_salida
+    
+    def ejecutar_conciliacion(self):
+        """Función principal equivalente a concilpos()"""
+        print("=== INICIANDO PROCESO DE CONCILIACIÓN ===\n")
+        
+        # 1. Obtener parámetros
+        self.obtener_parametros()
+        
+        # 2. Procesar diferentes fuentes de datos
+        datos_caps = self.procesar_caps_floors()
+        # Aquí irían las llamadas a procesar_swaps(), procesar_oppc(), etc.
+        
+        # 3. Consolidar todos los datos
+        if datos_caps is not None:
+            df_consolidado = self.consolidar_datos(datos_caps)
+            
+            # 4. Generar reporte final
+            ruta_reporte = self.generar_reporte(df_consolidado)
+            
+            print(f"\n=== PROCESO TERMINADO ===")
+            print(f"Archivo generado: {ruta_reporte}")
+        else:
+            print("No se encontraron archivos fuente para procesar.")
+
+# Uso del programa
+if __name__ == "__main__":
+    conciliador = ConciliadorFinanciero()
+    conciliador.ejecutar_conciliacion()
+
+
