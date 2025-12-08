@@ -676,4 +676,16 @@ if __name__ == "__main__":
     conciliador = ConciliadorFinanciero()
     conciliador.ejecutar_conciliacion()
 
+import re
+from datetime import datetime
 
+body = msg.Body
+
+match = re.search(r"Sent:\s*(.*)", body)
+if match:
+    sent_str = match.group(1).strip()
+    try:
+        fecha_original = datetime.strptime(sent_str, "%A, %B %d, %Y %I:%M %p")
+        print(fecha_original)
+    except:
+        print("No pude convertir la fecha")
