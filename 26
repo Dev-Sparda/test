@@ -1,0 +1,17 @@
+import datetime
+import locale
+
+# Necesario para que strptime entienda días y meses en español
+locale.setlocale(locale.LC_TIME, "es_MX.UTF-8")  # o "Spanish_Mexico", "es-MX", según Windows
+
+fecha_raw = "viernes, 5 de diciembre de 2025 03:45 p. m."
+
+# Normalizar AM/PM al formato inglés
+fecha_norm = fecha_raw.replace("p. m.", "PM").replace("a. m.", "AM")
+
+fecha_dt = datetime.datetime.strptime(
+    fecha_norm,
+    "%A, %d de %B de %Y %I:%M %p"
+)
+
+print(fecha_dt)
