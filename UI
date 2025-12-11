@@ -1,0 +1,194 @@
+sencilla ------>
+import customtkinter as ctk
+from tkinter import filedialog
+import pandas as pd
+
+class MiApp(ctk.CTk):
+
+    def __init__(self):
+        super().__init__()
+
+        self.title("App Principal")
+        self.geometry("400x300")
+
+        # Aquí guardaremos el FilePath elegido
+        self.file_path_insumo = None
+
+        # Botón que abre la ventana Parte 1
+        btn_parte1 = ctk.CTkButton(
+            self, 
+            text="Parte 1",
+            command=self.abrir_parte_1
+        )
+        btn_parte1.pack(pady=30)
+
+    # -----------------------------------------
+    # Ventana secundaria (Parte 1)
+    # -----------------------------------------
+    def abrir_parte_1(self):
+        ventana = ctk.CTkToplevel(self)
+        ventana.title("Parte 1")
+        ventana.geometry("300x200")
+
+        label = ctk.CTkLabel(ventana, text="Selecciona tu insumo:")
+        label.pack(pady=10)
+
+        btn_select = ctk.CTkButton(
+            ventana,
+            text="Elegir archivo",
+            command=self.seleccionar_insumo    # Llamamos método de la clase
+        )
+        btn_select.pack(pady=10)
+
+    # -----------------------------------------
+    # Selector de archivo
+    # -----------------------------------------
+    def seleccionar_insumo(self):
+        ruta = filedialog.askopenfilename()
+        if ruta:
+            self.file_path_insumo = ruta
+            print("✔ Archivo seleccionado:", self.file_path_insumo)
+
+    # -----------------------------------------
+    # Ejemplo de función que usa ese FilePath
+    # -----------------------------------------
+    def cargar_df(self):
+        if self.file_path_insumo:
+            df = pd.read_excel(self.file_path_insumo)
+            print(df.head())
+        else:
+            print("⚠ No se ha seleccionado ningún archivo.")
+
+# Ejecutar app
+if __name__ == "__main__":
+    ctk.set_appearance_mode("dark")
+    app = MiApp()
+    app.mainloop()
+
+
+
+
+
+--------------------------> complejaimport customtkinter as ctk
+from tkinter import filedialog, messagebox
+
+class App(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("Sistema de Colateral")
+        self.geometry("500x400")
+
+        # Guardar rutas de insumos MO
+        self.insumos_mo = {
+            'CSA': None,
+            'CLEARSTREAM': None,
+            'MORGAN': None
+        }
+
+        # Botón principal: abre ventana de insumos MO
+        btn_mo = ctk.CTkButton(
+            self,
+            text="Cargar Insumos MO",
+            command=self.abrir_carga_mo
+        )
+        btn_mo.pack(pady=30)
+
+        # Botón para generar reportes (requiere que MO esté cargado)
+        self.btn_generar = ctk.CTkButton(
+            self,
+            text="Generar Reportes",
+            command=self.run_pipeline,
+            state="disabled"  # Inicia deshabilitado
+        )
+        self.btn_generar.pack(pady=10)
+
+        # Botón Calypso (solo después de generar reportes)
+        self.btn_calypso = ctk.CTkButton(
+            self,
+            text="Cargar CALYPSO",
+            command=self.load_calypso,
+            state="disabled"
+        )
+        self.btn_calypso.pack(pady=10)
+
+    # -----------------------------------------
+    # Ventana secundaria: Cargar Insumos MO
+    # -----------------------------------------
+    def abrir_carga_mo(self):
+        ventana = ctk.CTkToplevel(self)
+        ventana.title("Cargar Insumos MO")
+        ventana.geometry("500x250")
+
+        # Frame para organizar
+        frame = ctk.CTkFrame(ventana)
+        frame.pack(pady=20, padx=20, fill="both", expand=True)
+
+        # Campos para cada insumo
+        self.mo_entries = {}
+        row = 0
+        for nombre in ['CSA', 'CLEARSTREAM', 'MORGAN']:
+            # Etiqueta
+            label = ctk.CTkLabel(frame, text=f"Insumo {nombre}:")
+            label.grid(row=row, column=0, sticky="w", padx=5, pady=5)
+
+            # Campo de ruta (solo lectura)
+            entry = ctk.CTkEntry(frame, width=250, state="disabled")
+            entry.grid(row=row, column=1, padx=5, pady=5)
+            self.mo_entries[nombre] = entry
+
+            # Botón de selección
+            btn = ctk.CTkButton(
+                frame,
+                text="Buscar",
+                width=80,
+                command=lambda n=nombre: self.seleccionar_insumo_mo(n)
+            )
+            btn.grid(row=row, column=2, padx=5, pady=5)
+
+            row += 1
+
+        # Botón para cargar todos
+        btn_cargar = ctk.CTkButton(
+            frame,
+            text="Cargar Insumos",
+            command=lambda: self.cargar_insumos_mo(ventana)
+        )
+        btn_cargar.grid(row=row, column=0, columnspan=3, pady=20)
+
+    # -----------------------------------------
+    # Seleccionar archivo para un insumo MO
+    # -----------------------------------------
+    def seleccionar_insumo_mo(self, nombre):
+        ruta = filedialog.askopenfilename(
+            title=f"Seleccionar archivo para {nombre}",
+            filetypes=[("Archivos Excel", "*.xlsx *.xlsm *.xls")]
+        )
+        if ruta:
+            self.insumos_mo[nombre] = ruta
+            # Mostrar ruta en el campo
+            self.mo_entries[nombre].configure(state="normal")
+            self.mo_entries[nombre].delete(0, "end")
+            self.mo_entries[nombre].insert(0, ruta)
+            self.mo_entries[nombre].configure(state="disabled")
+
+    # -----------------------------------------
+    # Cargar todos los insumos MO
+    # -----------------------------------------
+    def cargar_insumos_mo(self, ventana):
+        # Verificar que todos estén seleccionados
+        faltantes = [k for k, v in self.insumos_mo.items() if v is None]
+        if faltantes:
+            messagebox.showwarning("Faltan archivos", f"Por favor selecciona: {', '.join(faltantes)}")
+            return
+
+        try:
+            from etl import load_excel_file, validate_and_load_movimientos
+            for nombre, ruta in self.insumos_mo.items():
+                df = load_excel_file(ruta, nombre)
+                validate_and_load_movimientos(df, nombre)
+            
+            messagebox.showinfo("Éxito", "Insumos MO cargados correctamente.")
+            self.btn_generar.configure(state="normal")  # Habilitar Generar Reportes
+            ventana.destroy()
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
