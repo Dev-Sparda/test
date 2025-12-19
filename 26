@@ -15,3 +15,21 @@ fecha_dt = datetime.datetime.strptime(
 )
 
 print(fecha_dt)
+
+
+
+
+
+# Paso 6: Aplicar tu lógica original de actualización
+if not df_ilo.empty and not df_ilocalizables.empty:
+    df_merge = df_trabajo[mask_trabajo_ilo].merge(
+        df_ilocalizables[['NUMERO_DE_CONTRATO', 'BR'] + columnas_actualizar],
+        on=['NUMERO_DE_CONTRATO', 'BR'],
+        how='left',
+        suffixes=('', '_nuevo')
+    )
+
+    for col in columnas_actualizar:
+        col_nueva = col + '_nuevo'
+        if col_nueva in df_merge.columns:
+            df_trabajo.loc[mask_trabajo_ilo, col] = df_merge[col_nueva].combine_first(df_merge[col])
