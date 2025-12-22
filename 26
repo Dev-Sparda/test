@@ -33,3 +33,333 @@ if not df_ilo.empty and not df_ilocalizables.empty:
         col_nueva = col + '_nuevo'
         if col_nueva in df_merge.columns:
             df_trabajo.loc[mask_trabajo_ilo, col] = df_merge[col_nueva].combine_first(df_merge[col])
+
+
+-------------------------------<
+def clasificar_clientes(df_trabajo, df_cat_asesores):
+    """
+    Clasifica clientes en df_trabajo según reglas secuenciales.
+    Solo aplica reglas a filas donde TIPO_CUENTA_SANT está vacío.
+    """
+    
+    # Asegurar que la columna de control exista
+    if 'TIPO_CUENTA_SANT' not in df_trabajo.columns:
+        df_trabajo['TIPO_CUENTA_SANT'] = ''
+    
+    # Asegurar compatibilidad de tipos (evitar errores en comparaciones)
+    df_trabajo = df_trabajo.copy()  # evitar SettingWithCopyWarning
+    df_trabajo['TIPO_CUENTA_SANT'] = df_trabajo['TIPO_CUENTA_SANT'].fillna('').astype(str).str.strip()
+    
+    # Inicializar columna para AFI no encontrados (si no existe)
+    if 'AFI no encontrado en catálogo' not in df_trabajo.columns:
+        df_trabajo['AFI no encontrado en catálogo'] = False
+
+    # Función auxiliar para aplicar regla solo si no está clasificado
+    def aplicar_regla(mask, etiqueta, valores_fijos, valores_condicionales=None):
+        # Solo filas no clasificadas
+        mask_aplicable = mask & (df_trabajo['TIPO_CUENTA_SANT'] == '')
+        if mask_aplicable.any():
+            df_trabajo.loc[mask_aplicable, 'TIPO_CUENTA_SANT'] = etiqueta
+            # Asignar valores fijos
+            for col, val in valores_fijos.items():
+                df_trabajo.loc[mask_aplicable, col] = val
+            # Asignar valores condicionales (funciones o lógica dinámica)
+            if valores_condicionales:
+                for col, func in valores_condicionales.items():
+                    df_trabajo.loc[mask_aplicable, col] = func(df_trabajo.loc[mask_aplicable])
+
+    # ------------------------------------------------------------------
+    # 1. Regla: TIPO_DE_CLIENTE == "EXENTO"
+    # ------------------------------------------------------------------
+    mask1 = df_trabajo['TIPO_DE_CLIENTE'] == 'EXENTO'
+    aplicar_regla(
+        mask=mask1,
+        etiqueta='Clientes 201 institucionales',
+        valores_fijos={
+            'TIPO_DE_CLIENTE': '201',
+            'SERVICIO_DE_INVERSION': '406',
+            'TIPO_DE_CUENTA_O_SUBCUENTA': '406',
+            'TIPO_DE_CONTRATO': '604',
+            'DETERMINAR_SI_CEUNTA_CON_ASESOR_DE_INVERSIONES': '703',
+            'ASESOR_EN_INVERSIONES': '801',
+            'SERVICIO_INVERSION_PROCEDENCIA': '406'
+        }
+    )
+
+    # ------------------------------------------------------------------
+    # 2. Regla: BANCA == "BEI"
+    # ------------------------------------------------------------------
+    mask2 = df_trabajo['BANCA'] == 'BEI'
+    aplicar_regla(
+        mask=mask2,
+        etiqueta='Clientes 204 BEI',
+        valores_fijos={
+            'TIPO_DE_CLIENTE': '204',
+            'SERVICIO_DE_INVERSION': '404',
+            'TIPO_DE_CUENTA_O_SUBCUENTA': '404',
+            'TIPO_DE_CONTRATO': '601',
+            'DETERMINAR_SI_CEUNTA_CON_ASESOR_DE_INVERSIONES': '702',
+            'ASESOR_EN_INVERSIONES': '801',
+            'SERVICIO_INVERSION_PROCEDENCIA': '404'
+        }
+    )
+
+    # ------------------------------------------------------------------
+    # 3. Regla: Banca Privada + COD_DESPACHO + AFI → AFIs
+    # ------------------------------------------------------------------
+    mask3 = (
+        (df_trabajo['BANCA'] == 'Banca Privada') &
+        (df_trabajo['COD_DESPACHO'].notna()) &
+        (df_trabajo['COD_DESPACHO'] != '') &
+        (df_trabajo['AFI'].notna()) &
+        (df_trabajo['AFI'] != '')
+    )
+    
+    # Aplicar regla básica
+    aplicar_regla(
+        mask=mask3,
+        etiqueta='Clientes 204 AFIs',
+        valores_fijos={
+            'TIPO_DE_CLIENTE': '204',
+            'SERVICIO_DE_INVERSION': '403',
+            'TIPO_DE_CUENTA_O_SUBCUENTA': '403',
+            'TIPO_DE_CONTRATO': '601',
+            'DETERMINAR_SI_CEUNTA_CON_ASESOR_DE_INVERSIONES': '701',
+            'SERVICIO_INVERSION_PROCEDENCIA': '403'
+        },
+        valores_condicionales={
+            'ASESOR_EN_INVERSIONES': lambda df: df['COD_DESPACHO']  # directo
+        }
+    )
+
+    # Validación de AFI: cruce con catálogo
+    # Identificar filas clasificadas como "Clientes 204 AFIs"
+    mask_afis = df_trabajo['TIPO_CUENTA_SANT'] == 'Clientes 204 AFIs'
+    if mask_afis.any():
+        # Asegurar tipos en claves
+        df_afis = df_trabajo[mask_afis].copy()
+        df_afis['AFI'] = df_afis['AFI'].astype(str)
+        df_afis['COD_DESPACHO'] = df_afis['COD_DESPACHO'].astype(str)
+        df_cat_asesores = df_cat_asesores.copy()
+        df_cat_asesores['AFI'] = df_cat_asesores['AFI'].astype(str)
+        df_cat_asesores['COD_DESPACHO'] = df_cat_asesores['COD_DESPACHO'].astype(str)
+
+        # Hacer merge para verificar existencia
+        merged = df_afis.merge(
+            df_cat_asesores[['AFI', 'COD_DESPACHO']],
+            on=['AFI', 'COD_DESPACHO'],
+            how='left',
+            indicator=True
+        )
+        # Marcar no encontrados
+        no_encontrados = merged[merged['_merge'] == 'left_only'].index
+        df_trabajo.loc[no_encontrados, 'AFI no encontrado en catálogo'] = True
+
+    # ------------------------------------------------------------------
+    # 4. Regla: Banca Privada + TRAD in ("AIVO", "ICAL")
+    # ------------------------------------------------------------------
+    mask4 = (
+        (df_trabajo['BANCA'] == 'Banca Privada') &
+        (df_trabajo['TRAD'].isin(['AIVO', 'ICAL']))
+    )
+    
+    def calc_tipo_cliente_203_204(df):
+        tipo_orig = df['TIPO_DE_CLIENTE']
+        return np.where(
+            tipo_orig.isin(['NO SOFISTICADO', 'EXENTO']) | tipo_orig.isna() | (tipo_orig == ''),
+            '204',
+            np.where(tipo_orig == 'SOFISTICADO', '203', '204')
+        )
+    
+    aplicar_regla(
+        mask=mask4,
+        etiqueta='Clientes 203-204 Gestión de Inversiones',
+        valores_fijos={
+            'SERVICIO_DE_INVERSION': '402',
+            'TIPO_DE_CUENTA_O_SUBCUENTA': '402',
+            'TIPO_DE_CONTRATO': '602',
+            'DETERMINAR_SI_CEUNTA_CON_ASESOR_DE_INVERSIONES': '702',
+            'ASESOR_EN_INVERSIONES': '801',
+            'SERVICIO_INVERSION_PROCEDENCIA': '402'
+        },
+        valores_condicionales={
+            'TIPO_DE_CLIENTE': calc_tipo_cliente_203_204
+        }
+    )
+
+    # ------------------------------------------------------------------
+    # 5. Regla: Banca Privada + CARTA_ME="SI" + PERFIL_ACTUAL en perfilados
+    # ------------------------------------------------------------------
+    perfilados = ['EQUILIBRADO', 'DINÁMICO', 'MODERADO', 'AGRESIVO', 'CONSERVADOR', 'MUY CONSERVADOR']
+    mask5 = (
+        (df_trabajo['BANCA'] == 'Banca Privada') &
+        (df_trabajo['CARTA_ME'] == 'SI') &
+        (df_trabajo['PERFIL_ACTUAL'].isin(perfilados))
+    )
+    
+    aplicar_regla(
+        mask=mask5,
+        etiqueta='Clientes 203-204 Mixto Banca Privada',
+        valores_fijos={
+            'SERVICIO_DE_INVERSION': '405',
+            'TIPO_DE_CUENTA_O_SUBCUENTA': '408',
+            'TIPO_DE_CONTRATO': '601',
+            'DETERMINAR_SI_CEUNTA_CON_ASESOR_DE_INVERSIONES': '702',
+            'ASESOR_EN_INVERSIONES': '801',
+            'SERVICIO_INVERSION_PROCEDENCIA': '403'
+        },
+        valores_condicionales={
+            'TIPO_DE_CLIENTE': lambda df: np.where(df['TIPO_DE_CLIENTE'] == 'SOFISTICADO', '203', '204')
+        }
+    )
+
+    # ------------------------------------------------------------------
+    # 6. Regla: Banca Privada + CARTA_ME="SI" + PERFIL_ACTUAL en no perfilados
+    # ------------------------------------------------------------------
+    no_perfilados = ['SIN PERFIL', 'EN TRÁMITE', 'RECHAZADO']
+    mask6 = (
+        (df_trabajo['BANCA'] == 'Banca Privada') &
+        (df_trabajo['CARTA_ME'] == 'SI') &
+        (df_trabajo['PERFIL_ACTUAL'].isin(no_perfilados))
+    )
+    
+    aplicar_regla(
+        mask=mask6,
+        etiqueta='Clientes 203-204 no perfilados con Me Banca Privada',
+        valores_fijos={
+            'SERVICIO_DE_INVERSION': '403',
+            'TIPO_DE_CUENTA_O_SUBCUENTA': '403',
+            'TIPO_DE_CONTRATO': '601',
+            'DETERMINAR_SI_CEUNTA_CON_ASESOR_DE_INVERSIONES': '702',
+            'ASESOR_EN_INVERSIONES': '801',
+            'SERVICIO_INVERSION_PROCEDENCIA': '403'
+        },
+        valores_condicionales={
+            'TIPO_DE_CLIENTE': lambda df: np.where(df['TIPO_DE_CLIENTE'] == 'SOFISTICADO', '203', '204')
+        }
+    )
+
+    # ------------------------------------------------------------------
+    # 7. Regla: Banca Privada + CARTA_ME="NO" + PERFIL_ACTUAL en no perfilados + MUY CONSERVADOR
+    # ------------------------------------------------------------------
+    no_perfilados_ext = no_perfilados + ['MUY CONSERVADOR']
+    mask7 = (
+        (df_trabajo['BANCA'] == 'Banca Privada') &
+        (df_trabajo['CARTA_ME'] == 'NO') &
+        (df_trabajo['PERFIL_ACTUAL'].isin(no_perfilados_ext))
+    )
+    
+    aplicar_regla(
+        mask=mask7,
+        etiqueta='Clientes 203-204 No perfilados sin me',
+        valores_fijos={
+            'SERVICIO_DE_INVERSION': '404',
+            'TIPO_DE_CUENTA_O_SUBCUENTA': '404',
+            'TIPO_DE_CONTRATO': '601',
+            'DETERMINAR_SI_CEUNTA_CON_ASESOR_DE_INVERSIONES': '702',
+            'ASESOR_EN_INVERSIONES': '801',
+            'SERVICIO_INVERSION_PROCEDENCIA': '404'
+        },
+        valores_condicionales={
+            'TIPO_DE_CLIENTE': lambda df: np.where(df['TIPO_DE_CLIENTE'] == 'SOFISTICADO', '203', '204')
+        }
+    )
+
+    # ------------------------------------------------------------------
+    # 8. Regla: Banca Privada + CARTA_ME="NO" + PERFIL_ACTUAL en perfilados
+    # ------------------------------------------------------------------
+    mask8 = (
+        (df_trabajo['BANCA'] == 'Banca Privada') &
+        (df_trabajo['CARTA_ME'] == 'NO') &
+        (df_trabajo['PERFIL_ACTUAL'].isin(perfilados))
+    )
+    
+    aplicar_regla(
+        mask=mask8,
+        etiqueta='Clientes 203-204 perfilados sin Me Banca Privada',
+        valores_fijos={
+            'SERVICIO_DE_INVERSION': '401',
+            'TIPO_DE_CUENTA_O_SUBCUENTA': '401',
+            'TIPO_DE_CONTRATO': '601',
+            'DETERMINAR_SI_CEUNTA_CON_ASESOR_DE_INVERSIONES': '702',
+            'ASESOR_EN_INVERSIONES': '801',
+            'SERVICIO_INVERSION_PROCEDENCIA': '401'
+        },
+        valores_condicionales={
+            'TIPO_DE_CLIENTE': lambda df: np.where(df['TIPO_DE_CLIENTE'] == 'SOFISTICADO', '203', '204')
+        }
+    )
+
+    # ------------------------------------------------------------------
+    # 9. Regla: Banca Particulares + FM="F" + no PF Act. Emp. + no perfilados
+    # ------------------------------------------------------------------
+    mask9 = (
+        (df_trabajo['BANCA'] == 'Banca Particulares') &
+        (df_trabajo['FM'] == 'F') &
+        (df_trabajo['TIPO_PERSONA'] != 'PERSONAS FISICAS CON ACT. EMPRESARIAL') &
+        (df_trabajo['PERFIL_ACTUAL'].isin(no_perfilados))
+    )
+    
+    aplicar_regla(
+        mask=mask9,
+        etiqueta='Clientes 204 No perfilados comercialización',
+        valores_fijos={
+            'TIPO_DE_CLIENTE': '204',
+            'SERVICIO_DE_INVERSION': '404',
+            'TIPO_DE_CUENTA_O_SUBCUENTA': '404',
+            'TIPO_DE_CONTRATO': '601',
+            'DETERMINAR_SI_CEUNTA_CON_ASESOR_DE_INVERSIONES': '702',
+            'ASESOR_EN_INVERSIONES': '801',
+            'SERVICIO_INVERSION_PROCEDENCIA': '404'
+        }
+    )
+
+    # ------------------------------------------------------------------
+    # 10. Regla: Banca Particulares + FM="F" + no PF Act. Emp. (resto)
+    # ------------------------------------------------------------------
+    mask10 = (
+        (df_trabajo['BANCA'] == 'Banca Particulares') &
+        (df_trabajo['FM'] == 'F') &
+        (df_trabajo['TIPO_PERSONA'] != 'PERSONAS FISICAS CON ACT. EMPRESARIAL')
+    )
+    
+    aplicar_regla(
+        mask=mask10,
+        etiqueta='Clientes 204 Particulares',
+        valores_fijos={
+            'TIPO_DE_CLIENTE': '204',
+            'SERVICIO_DE_INVERSION': '405',
+            'TIPO_DE_CUENTA_O_SUBCUENTA': '408',
+            'TIPO_DE_CONTRATO': '601',
+            'DETERMINAR_SI_CEUNTA_CON_ASESOR_DE_INVERSIONES': '702',
+            'ASESOR_EN_INVERSIONES': '801',
+            'SERVICIO_INVERSION_PROCEDENCIA': '403'
+        }
+    )
+
+    # ------------------------------------------------------------------
+    # 11. Regla: (Banca Particulares + FM="M") OR (FM="F" + PF Act. Emp.) + no perfilados
+    # ------------------------------------------------------------------
+    cond1 = (df_trabajo['BANCA'] == 'Banca Particulares') & (df_trabajo['FM'] == 'M')
+    cond2 = (
+        (df_trabajo['BANCA'] == 'Banca Particulares') &
+        (df_trabajo['FM'] == 'F') &
+        (df_trabajo['TIPO_PERSONA'] == 'PERSONAS FISICAS CON ACT. EMPRESARIAL')
+    )
+    mask11 = (cond1 | cond2) & (df_trabajo['PERFIL_ACTUAL'].isin(no_perfilados))
+    
+    aplicar_regla(
+        mask=mask11,
+        etiqueta='Clientes 204 No perfilados comercialización',
+        valores_fijos={
+            'TIPO_DE_CLIENTE': '204',
+            'SERVICIO_DE_INVERSION': '404',
+            'TIPO_DE_CUENTA_O_SUBCUENTA': '404',
+            'TIPO_DE_CONTRATO': '601',
+            'DETERMINAR_SI_CEUNTA_CON_ASESOR_DE_INVERSIONES': '702',
+            'ASESOR_EN_INVERSIONES': '801',
+            'SERVICIO_INVERSION_PROCEDENCIA': '404'
+        }
+    )
+
+    return df_trabajo
