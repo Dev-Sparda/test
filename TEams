@@ -1,0 +1,509 @@
+import win32com.client
+import win32gui
+import win32con
+import win32clipboard
+from datetime import datetime, timedelta, time
+import re
+import time as t
+import pandas as pd
+import json
+import argparse
+from typing import List, Dict, Optional
+import sys
+
+class TeamsChatAnalyzer:
+    def __init__(self, chat_name: str = None):
+        self.shell = win32com.client.Dispatch("WScript.Shell")
+        self.chat_name = chat_name  # Nombre del chat específico
+        self.teams_hwnd = None
+        
+    def open_specific_chat(self, chat_name: str) -> bool:
+        """Abrir un chat específico en Teams"""
+        if not self._activate_teams():
+            return False
+        
+        t.sleep(2)
+        
+        # Abrir búsqueda de chats (Ctrl+2 en Teams)
+        self.shell.SendKeys("^2")
+        t.sleep(1)
+        
+        # Escribir nombre del chat
+        self.shell.SendKeys(chat_name)
+        t.sleep(2)
+        
+        # Seleccionar primer resultado
+        self.shell.SendKeys("{DOWN}")
+        t.sleep(0.5)
+        self.shell.SendKeys("{ENTER}")
+        t.sleep(3)
+        
+        # Verificar si estamos en el chat correcto
+        chat_title = self._get_chat_title()
+        print(f"Chat abierto: {chat_title}")
+        
+        return chat_name.lower() in chat_title.lower()
+    
+    def _activate_teams(self) -> bool:
+        """Activar ventana de Teams"""
+        def enum_windows_callback(hwnd, results):
+            if win32gui.IsWindowVisible(hwnd):
+                window_text = win32gui.GetWindowText(hwnd)
+                if "Microsoft Teams" in window_text:
+                    results.append(hwnd)
+            return True
+        
+        results = []
+        win32gui.EnumWindows(enum_windows_callback, results)
+        
+        if results:
+            self.teams_hwnd = results[0]
+            win32gui.ShowWindow(self.teams_hwnd, win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(self.teams_hwnd)
+            t.sleep(2)
+            return True
+        return False
+    
+    def _get_chat_title(self) -> str:
+        """Obtener título del chat actual"""
+        try:
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.CloseClipboard()
+            
+            # Copiar título (Alt+Shift+T en Teams)
+            self.shell.SendKeys("%+t")
+            t.sleep(0.5)
+            
+            win32clipboard.OpenClipboard()
+            title = win32clipboard.GetClipboardData()
+            win32clipboard.CloseClipboard()
+            
+            return title.strip()
+        except:
+            return "Desconocido"
+    
+    def search_in_chat_since(self, start_date_str: str, search_term: str = None) -> List[Dict]:
+        """
+        Buscar en chat específico desde fecha dada
+        
+        Args:
+            start_date_str: Fecha inicial (YYYY-MM-DD)
+            search_term: Término opcional para buscar
+        """
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+        today = datetime.now()
+        
+        print(f"Buscando en chat '{self.chat_name}' desde {start_date.date()} hasta {today.date()}")
+        
+        # 1. Abrir el chat específico
+        if not self.open_specific_chat(self.chat_name):
+            print(f"Error: No se pudo abrir el chat '{self.chat_name}'")
+            return []
+        
+        t.sleep(2)
+        
+        # 2. Ir al inicio del historial
+        print("Navegando al inicio del historial...")
+        self._go_to_chat_start()
+        t.sleep(3)
+        
+        # 3. Buscar por fecha inicial
+        print(f"Buscando desde fecha: {start_date.strftime('%d/%m/%Y')}")
+        self._search_by_date(start_date)
+        t.sleep(3)
+        
+        # 4. Capturar mensajes desde esa fecha
+        print("Capturando mensajes...")
+        messages = self._capture_messages_from_date(start_date, today)
+        
+        # 5. Filtrar por término de búsqueda si se proporciona
+        if search_term:
+            messages = [msg for msg in messages if search_term.lower() in msg['content'].lower()]
+        
+        return messages
+    
+    def _go_to_chat_start(self):
+        """Ir al inicio del chat"""
+        # Ir al inicio (Ctrl+Home varias veces)
+        for _ in range(5):
+            self.shell.SendKeys("^{HOME}")
+            t.sleep(0.5)
+    
+    def _search_by_date(self, target_date: datetime):
+        """Buscar mensajes por fecha específica"""
+        # Abrir búsqueda (Ctrl+F)
+        self.shell.SendKeys("^f")
+        t.sleep(1)
+        
+        # Buscar por fecha en formato que Teams reconozca
+        # Formato 1: "30/11/2024"
+        date_str = target_date.strftime("%d/%m/%Y")
+        self.shell.SendKeys(date_str)
+        t.sleep(1)
+        self.shell.SendKeys("{ENTER}")
+        t.sleep(2)
+        
+        # Limpiar búsqueda
+        self.shell.SendKeys("{ESC}")
+        t.sleep(1)
+    
+    def _capture_messages_from_date(self, start_date: datetime, end_date: datetime) -> List[Dict]:
+        """Capturar mensajes en rango de fechas"""
+        all_messages = []
+        current_date = start_date
+        
+        print(f"Capturando desde {start_date.date()} hasta {end_date.date()}")
+        
+        while current_date <= end_date:
+            print(f"Procesando: {current_date.strftime('%d/%m/%Y')}")
+            
+            # Capturar día actual
+            day_messages = self._capture_day(current_date)
+            all_messages.extend(day_messages)
+            
+            # Ir al siguiente día
+            current_date += timedelta(days=1)
+            
+            # Si no es el último día, buscar siguiente fecha
+            if current_date <= end_date:
+                self._search_next_date(current_date)
+            
+            # Pausa para no saturar
+            t.sleep(1)
+        
+        return all_messages
+    
+    def _capture_day(self, target_date: datetime) -> List[Dict]:
+        """Capturar mensajes de un día específico"""
+        messages = []
+        
+        # Hacer scroll hacia arriba para capturar todo el día
+        for _ in range(10):  # 10 intentos de scroll
+            # Capturar página actual
+            content = self._capture_current_view()
+            
+            if content:
+                # Parsear mensajes
+                parsed = self._parse_chat_messages(content, target_date)
+                messages.extend(parsed)
+            
+            # Scroll hacia arriba
+            self.shell.SendKeys("{PGUP}")
+            t.sleep(0.5)
+            
+            # Verificar si ya pasamos el día buscado
+            if self._check_if_past_date(target_date):
+                break
+        
+        # Eliminar duplicados
+        unique_messages = []
+        seen_ids = set()
+        for msg in messages:
+            msg_id = f"{msg.get('datetime')}_{msg.get('sender')}_{msg.get('content')[:50]}"
+            if msg_id not in seen_ids:
+                seen_ids.add(msg_id)
+                unique_messages.append(msg)
+        
+        print(f"  Encontrados: {len(unique_messages)} mensajes")
+        return unique_messages
+    
+    def _capture_current_view(self) -> str:
+        """Capturar contenido visible actual"""
+        try:
+            # Seleccionar y copiar
+            self.shell.SendKeys("^a")
+            t.sleep(0.3)
+            self.shell.SendKeys("^c")
+            t.sleep(0.3)
+            
+            win32clipboard.OpenClipboard()
+            data = win32clipboard.GetClipboardData()
+            win32clipboard.CloseClipboard()
+            
+            return data
+        except:
+            return ""
+    
+    def _parse_chat_messages(self, content: str, target_date: datetime) -> List[Dict]:
+        """Parsear mensajes del chat"""
+        messages = []
+        lines = content.split('\n')
+        
+        current_msg = []
+        current_sender = None
+        current_time = None
+        
+        date_pattern = target_date.strftime(r"(%d/%m/%Y|\d{1,2} de \w+ de %Y)")
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Buscar patrones de mensaje
+            # Patrón 1: "10:30 Juan Pérez"
+            time_sender = re.match(r'^(\d{1,2}:\d{2})\s+(.+)$', line)
+            
+            # Patrón 2: Solo hora "10:30" (continuación)
+            time_only = re.match(r'^(\d{1,2}:\d{2})$', line)
+            
+            # Patrón 3: Separador de fecha
+            date_sep = re.search(date_pattern, line)
+            
+            if date_sep and date_sep.group(0):
+                # Nueva fecha encontrada
+                if current_msg and current_time and current_sender:
+                    messages.append(self._create_message(
+                        current_msg, current_time, current_sender, target_date
+                    ))
+                current_msg = []
+                current_sender = None
+                current_time = None
+                
+            elif time_sender:
+                # Nuevo mensaje
+                if current_msg and current_time and current_sender:
+                    messages.append(self._create_message(
+                        current_msg, current_time, current_sender, target_date
+                    ))
+                
+                current_time = time_sender.group(1)
+                current_sender = time_sender.group(2)
+                current_msg = []
+                
+            elif time_only and current_sender:
+                # Continuación con nueva línea de tiempo
+                if current_msg:
+                    messages.append(self._create_message(
+                        current_msg, current_time, current_sender, target_date
+                    ))
+                current_time = time_only.group(1)
+                current_msg = []
+                
+            elif current_sender:
+                # Contenido del mensaje
+                current_msg.append(line)
+        
+        # Último mensaje
+        if current_msg and current_time and current_sender:
+            messages.append(self._create_message(
+                current_msg, current_time, current_sender, target_date
+            ))
+        
+        return messages
+    
+    def _create_message(self, msg_lines: List[str], msg_time: str, 
+                       sender: str, date: datetime) -> Dict:
+        """Crear objeto mensaje"""
+        content = ' '.join(msg_lines)
+        
+        try:
+            # Parsear hora
+            if 'PM' in msg_time.upper() or 'AM' in msg_time.upper():
+                time_obj = datetime.strptime(msg_time, "%I:%M %p").time()
+            else:
+                time_obj = datetime.strptime(msg_time, "%H:%M").time()
+            
+            full_datetime = datetime.combine(date.date(), time_obj)
+        except:
+            full_datetime = date
+        
+        # Analizar si es entrega tardía
+        is_late, delay_minutes = self._check_if_late_delivery(content, full_datetime)
+        
+        return {
+            'chat': self.chat_name,
+            'datetime': full_datetime,
+            'date': full_datetime.date(),
+            'time': full_datetime.time(),
+            'sender': sender,
+            'content': content,
+            'is_late_delivery': is_late,
+            'delay_minutes': delay_minutes,
+            'mentions_tardiness': any(word in content.lower() for word in 
+                                     ['tardío', 'tarde', 'retraso', 'late', 'delay'])
+        }
+    
+    def _check_if_late_delivery(self, content: str, msg_datetime: datetime) -> tuple:
+        """Verificar si es entrega tardía"""
+        # Palabras clave que indican entrega
+        delivery_keywords = ['entreg', 'entregar', 'deliver', 'enví', 'send', 
+                           'report', 'informe', 'submit', 'enviado']
+        
+        has_delivery = any(keyword in content.lower() for keyword in delivery_keywords)
+        
+        if not has_delivery:
+            return False, 0
+        
+        # Verificar hora (después de las 17:00 = tardío)
+        if msg_datetime.hour >= 17:
+            # Calcular retraso en minutos después de las 17:00
+            deadline = datetime.combine(msg_datetime.date(), time(17, 0))
+            delay = int((msg_datetime - deadline).total_seconds() / 60)
+            return True, delay
+        
+        return False, 0
+    
+    def _check_if_past_date(self, target_date: datetime) -> bool:
+        """Verificar si hemos pasado la fecha objetivo"""
+        # Método simple: capturar y buscar fechas anteriores
+        try:
+            self.shell.SendKeys("^c")
+            t.sleep(0.2)
+            
+            win32clipboard.OpenClipboard()
+            data = win32clipboard.GetClipboardData()
+            win32clipboard.CloseClipboard()
+            
+            # Buscar fechas anteriores al objetivo
+            date_patterns = [
+                r'(\d{2})/(\d{2})/(\d{4})',
+                r'(\d{1,2}) de (\w+) de (\d{4})'
+            ]
+            
+            for pattern in date_patterns:
+                matches = re.findall(pattern, data)
+                for match in matches:
+                    if len(match) == 3:
+                        try:
+                            found_date = datetime(int(match[2]), int(match[1]), int(match[0]))
+                            if found_date < target_date:
+                                return True
+                        except:
+                            continue
+            
+            return False
+        except:
+            return False
+    
+    def _search_next_date(self, next_date: datetime):
+        """Buscar siguiente fecha"""
+        # Limpiar búsqueda anterior
+        self.shell.SendKeys("{ESC}")
+        t.sleep(0.5)
+        
+        # Nueva búsqueda
+        self.shell.SendKeys("^f")
+        t.sleep(0.5)
+        
+        date_str = next_date.strftime("%d/%m/%Y")
+        self.shell.SendKeys(date_str)
+        t.sleep(0.5)
+        self.shell.SendKeys("{ENTER}")
+        t.sleep(2)
+        self.shell.SendKeys("{ESC}")
+
+def main():
+    # Configurar argumentos de línea de comandos
+    parser = argparse.ArgumentParser(description='Analizar chat de Teams desde fecha específica')
+    parser.add_argument('--chat', required=True, help='Nombre del chat en Teams')
+    parser.add_argument('--desde', required=True, help='Fecha inicio (YYYY-MM-DD)')
+    parser.add_argument('--buscar', help='Término específico a buscar (opcional)')
+    parser.add_argument('--output', default='analisis_chat.xlsx', help='Archivo de salida')
+    
+    args = parser.parse_args()
+    
+    print("=== Analizador de Chat de Teams ===")
+    print(f"Chat: {args.chat}")
+    print(f"Desde: {args.desde}")
+    print(f"Buscar: {args.buscar or 'Todos los mensajes'}")
+    print("=" * 40)
+    
+    # Inicializar analizador
+    analyzer = TeamsChatAnalyzer(chat_name=args.chat)
+    
+    try:
+        # Buscar mensajes
+        messages = analyzer.search_in_chat_since(args.desde, args.buscar)
+        
+        if not messages:
+            print("\nNo se encontraron mensajes en el rango especificado.")
+            return
+        
+        print(f"\nTotal de mensajes encontrados: {len(messages)}")
+        
+        # Filtrar entregas tardías
+        late_deliveries = [msg for msg in messages if msg['is_late_delivery']]
+        
+        print(f"Entregas tardías encontradas: {len(late_deliveries)}")
+        
+        # Crear reporte
+        if messages:
+            # DataFrame con todos los mensajes
+            df_all = pd.DataFrame([{
+                'Fecha': msg['datetime'].strftime('%d/%m/%Y'),
+                'Hora': msg['datetime'].strftime('%H:%M'),
+                'Remitente': msg['sender'],
+                'Contenido': msg['content'][:200],
+                'Es entrega tardía': 'Sí' if msg['is_late_delivery'] else 'No',
+                'Retraso (min)': msg['delay_minutes'] if msg['is_late_delivery'] else 0,
+                'Menciona tardanza': 'Sí' if msg['mentions_tardiness'] else 'No'
+            } for msg in messages])
+            
+            # Guardar Excel con múltiples hojas
+            with pd.ExcelWriter(args.output, engine='openpyxl') as writer:
+                df_all.to_excel(writer, sheet_name='Todos los mensajes', index=False)
+                
+                if late_deliveries:
+                    df_late = pd.DataFrame([{
+                        'Fecha': msg['datetime'].strftime('%d/%m/%Y'),
+                        'Hora': msg['datetime'].strftime('%H:%M'),
+                        'Remitente': msg['sender'],
+                        'Retraso (min)': msg['delay_minutes'],
+                        'Contenido': msg['content'][:300]
+                    } for msg in late_deliveries])
+                    
+                    df_late.to_excel(writer, sheet_name='Entregas Tardías', index=False)
+                    
+                    # Estadísticas
+                    stats = {
+                        'Métrica': ['Total mensajes', 'Entregas tardías', 'Porcentaje tardías', 
+                                   'Mayor retraso', 'Retraso promedio'],
+                        'Valor': [
+                            len(messages),
+                            len(late_deliveries),
+                            f"{(len(late_deliveries)/len(messages)*100):.1f}%",
+                            f"{max([m['delay_minutes'] for m in late_deliveries])} min" if late_deliveries else "N/A",
+                            f"{sum([m['delay_minutes'] for m in late_deliveries])/len(late_deliveries):.0f} min" if late_deliveries else "N/A"
+                        ]
+                    }
+                    df_stats = pd.DataFrame(stats)
+                    df_stats.to_excel(writer, sheet_name='Estadísticas', index=False)
+            
+            print(f"\nReporte guardado en: {args.output}")
+            
+            # Mostrar resumen
+            if late_deliveries:
+                print("\n=== RESUMEN ENTREGAS TARDÍAS ===")
+                late_deliveries.sort(key=lambda x: x['delay_minutes'], reverse=True)
+                
+                for i, delivery in enumerate(late_deliveries[:10], 1):
+                    print(f"{i}. {delivery['sender']} - {delivery['datetime'].strftime('%d/%m %H:%M')} "
+                          f"(Retraso: {delivery['delay_minutes']} min)")
+        
+        # Guardar también en JSON para análisis detallado
+        json_file = args.output.replace('.xlsx', '.json')
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(messages, f, default=str, ensure_ascii=False, indent=2)
+        print(f"Datos completos en: {json_file}")
+        
+    except Exception as e:
+        print(f"Error durante el análisis: {e}")
+        import traceback
+        traceback.print_exc()
+
+# EJEMPLOS DE USO:
+"""
+# Ejemplo 1: Buscar todo desde fecha específica
+python teams_analyzer.py --chat "Proyecto Alpha" --desde "2025-11-01"
+
+# Ejemplo 2: Buscar con término específico
+python teams_analyzer.py --chat "Soporte Técnico" --desde "2025-10-01" --buscar "error"
+
+# Ejemplo 3: Especificar archivo de salida
+python teams_analyzer.py --chat "Reuniones Diarias" --desde "2025-09-01" --output "reporte_septiembre.xlsx"
+"""
+
+if __name__ == "__main__":
+    main()
