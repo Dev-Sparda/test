@@ -1,0 +1,120 @@
+# db_manager.py
+import sqlite3
+from pathlib import Path
+from datetime import date
+
+DB_PATH = Path("desarrollos.db")
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS DESARROLLOS (
+        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        REPORTE TEXT,
+        RESPONSABLE_DESARROLLO TEXT,
+        USUARIO_SOLICITANTE TEXT,
+        TECNOLOGIA_USADA TEXT,
+        FECHA_INICIO TEXT,
+        ESTATUS TEXT
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS FASES (
+        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        ID_DESARROLLO INTEGER,
+        FASE TEXT,
+        DESCRIPCION TEXT,
+        FECHA_INICIO TEXT,
+        FECHA_FIN TEXT,
+        COMENTARIOS TEXT,
+        ESTATUS TEXT DEFAULT 'En progreso',
+        FOREIGN KEY(ID_DESARROLLO) REFERENCES DESARROLLOS(ID)
+    )
+    """)
+
+    conn.commit()
+    conn.close()
+
+def get_all_desarrollos():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM DESARROLLOS")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def get_desarrollo_by_id(id_dev):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM DESARROLLOS WHERE ID = ?", (id_dev,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+def get_fases_by_desarrollo(id_desarrollo):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM FASES WHERE ID_DESARROLLO = ?", (id_desarrollo,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def save_desarrollo(data):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO DESARROLLOS (REPORTE, RESPONSABLE_DESARROLLO, USUARIO_SOLICITANTE,
+                                 TECNOLOGIA_USADA, FECHA_INICIO, ESTATUS)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        data["REPORTE"],
+        data["RESPONSABLE_DESARROLLO"],
+        data["USUARIO_SOLICITANTE"],
+        data["TECNOLOGIA_USADA"],
+        data["FECHA_INICIO"],
+        data["ESTATUS"]
+    ))
+    conn.commit()
+    last_id = cursor.lastrowid
+    conn.close()
+    return last_id
+
+def save_fase(id_desarrollo, fase_data):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO FASES (ID_DESARROLLO, FASE, DESCRIPCION, FECHA_INICIO, FECHA_FIN, COMENTARIOS, ESTATUS)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        id_desarrollo,
+        fase_data["FASE"],
+        fase_data["DESCRIPCION"],
+        fase_data["FECHA_INICIO"],
+        fase_data["FECHA_FIN"],
+        fase_data["COMENTARIOS"],
+        fase_data.get("ESTATUS", "En progreso")
+    ))
+    conn.commit()
+    conn.close()
+
+def get_fases_vencidas_sin_finalizar():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    hoy = date.today().isoformat()
+    cursor.execute("""
+        SELECT f.*, d.RESPONSABLE_DESARROLLO
+        FROM FASES f
+        JOIN DESARROLLOS d ON f.ID_DESARROLLO = d.ID
+        WHERE f.ESTATUS != 'Finalizada'
+          AND f.FECHA_FIN < ?
+    """, (hoy,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
