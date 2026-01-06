@@ -1,0 +1,48 @@
+# catalog_db.py
+import sqlite3
+from pathlib import Path
+
+def elpepe():
+    pass
+
+CATALOG_DB = Path("catalogo.db")
+
+def init_catalog_db():
+    conn = sqlite3.connect(CATALOG_DB)
+    cursor = conn.cursor()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS RESPONSABLES (
+        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        NOMBRE TEXT UNIQUE,
+        CORREO TEXT
+    )
+    """)
+    # Puedes insertar datos de ejemplo aquí si quieres
+    ejemplo = [
+        ("Ana López", "ana.lopez@empresa.com"),
+        ("Carlos Méndez", "carlos.mendez@empresa.com"),
+        ("Diana Ruiz", "diana.ruiz@empresa.com")
+    ]
+    for nombre, correo in ejemplo:
+        cursor.execute("INSERT OR IGNORE INTO RESPONSABLES (NOMBRE, CORREO) VALUES (?, ?)", (nombre, correo))
+    conn.commit()
+    conn.close()
+
+def get_responsables_con_correo():
+    conn = sqlite3.connect(CATALOG_DB)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT NOMBRE, CORREO FROM RESPONSABLES ORDER BY NOMBRE")
+    rows = cursor.fetchall()
+    conn.close()
+    return [(r["NOMBRE"], r["CORREO"]) for r in rows]
+
+def get_usuarios_solicitantes():
+    # Por simplicidad, usamos los mismos nombres (o puedes hacer otra tabla)
+    conn = sqlite3.connect(CATALOG_DB)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT NOMBRE FROM RESPONSABLES ORDER BY NOMBRE")
+    rows = cursor.fetchall()
+    conn.close()
+    return [r["NOMBRE"] for r in rows]
