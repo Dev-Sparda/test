@@ -1,0 +1,624 @@
+Polars
+
+📁 ÍNDICE
+1.	Instalación
+2.	Crear DataFrames
+3.	Leer archivos
+4.	Escribir archivos
+5.	Selección y filtrado
+6.	Manipulación de datos
+7.	Agregaciones
+8.	Uniones (Joins)
+9.	Agrupaciones
+10.	Series y Expresiones
+11.	SQL con Polars
+12.	Tips avanzados
+________________________________________
+📦 INSTALACIÓN
+bash
+# Básico
+pip install polars
+
+# Con todas las dependencias (RECOMENDADO)
+pip install "polars[all]"
+
+# Para Excel
+pip install "polars[xlsx]"
+
+# Para bases de datos
+pip install "polars[connectorx]"
+
+# Versión específica
+pip install polars==0.20.0
+________________________________________
+🏗️ CREAR DATAFRAMES
+Desde diccionario
+python
+import polars as pl
+
+df = pl.DataFrame({
+    'nombre': ['Ana', 'Juan', 'María'],
+    'edad': [25, 30, 28],
+    'ciudad': ['Madrid', 'Barcelona', 'Valencia'],
+    'salario': [50000, 60000, 55000]
+})
+Desde lista de listas
+python
+df = pl.DataFrame(
+    [
+        [1, 'Ana', 25],
+        [2, 'Juan', 30],
+        [3, 'María', 28]
+    ],
+    schema=['id', 'nombre', 'edad']
+)
+Desde lista de diccionarios
+python
+data = [
+    {'id': 1, 'nombre': 'Ana', 'edad': 25},
+    {'id': 2, 'nombre': 'Juan', 'edad': 30},
+    {'id': 3, 'nombre': 'María', 'edad': 28}
+]
+df = pl.DataFrame(data)
+Rangos y secuencias
+python
+# Secuencia de números
+df = pl.DataFrame({'id': pl.arange(0, 100, eager=True)})
+
+# Fechas
+df = pl.DataFrame({
+    'fecha': pl.date_range(
+        start='2024-01-01',
+        end='2024-12-31',
+        interval='1d',
+        eager=True
+    )
+})
+
+# Valores aleatorios
+df = pl.DataFrame({
+    'valor': pl.Series('val', [1, 2, 3]).shuffle()
+})
+________________________________________
+📖 LEER ARCHIVOS
+CSV
+python
+# Básico
+df = pl.read_csv('datos.csv')
+
+# Con opciones
+df = pl.read_csv(
+    'datos.csv',
+    separator=',',
+    has_header=True,
+    infer_schema_length=1000,
+    ignore_errors=False,
+    parse_dates=True,
+    encoding='utf8'
+)
+
+# Solo columnas específicas
+df = pl.read_csv(
+    'datos.csv',
+    columns=['col1', 'col3', 'col5']  # índices o nombres
+)
+
+# Con tipos específicos
+df = pl.read_csv(
+    'datos.csv',
+    schema_overrides={'col1': pl.Int64, 'col2': pl.String}
+)
+Excel
+python
+# Básico
+df = pl.read_excel('datos.xlsx')
+
+# Hoja específica
+df = pl.read_excel(
+    'datos.xlsx',
+    sheet_name='Hoja1',  # o sheet_id=0
+    engine='openpyxl'  # o 'xlsxwriter'
+)
+
+# Columnas específicas
+df = pl.read_excel(
+    'datos.xlsx',
+    columns=['A', 'C', 'E'],  # Letras Excel
+    columns=[0, 2, 4],        # Índices
+    columns=slice(0, 5)       # Rango
+)
+
+# Saltar filas/celdas
+df = pl.read_excel(
+    'datos.xlsx',
+    skip_rows=1,           # Saltar primera fila
+    has_header=True        # Primera fila leída es encabezado
+)
+Parquet (Recomendado para grandes datasets)
+python
+df = pl.read_parquet('datos.parquet')
+
+# Con filtros (muy eficiente)
+df = pl.read_parquet(
+    'datos.parquet',
+    columns=['col1', 'col2'],          # Solo estas columnas
+    filters=[                           # Filtro pushdown
+        ('fecha', '>=', '2024-01-01'),
+        ('columna', '=', 'valor')
+    ]
+)
+JSON
+python
+df = pl.read_json('datos.json')
+df = pl.read_ndjson('datos.ndjson')  # Newline delimited
+Base de datos (SQL)
+python
+import sqlite3
+from sqlalchemy import create_engine
+
+# SQLite con string URI
+df = pl.read_database(
+    query='SELECT * FROM tabla WHERE condicion',
+    connection='sqlite:///database.db'
+)
+
+# SQLite con SQLAlchemy
+engine = create_engine('sqlite:///database.db')
+df = pl.read_database('SELECT * FROM tabla', connection=engine)
+
+# Con parámetros
+df = pl.read_database(
+    query='SELECT * FROM users WHERE age > ? AND city = ?',
+    connection=engine,
+    query_params=[25, 'Madrid']
+)
+
+# PostgreSQL, MySQL, etc.
+df = pl.read_database(
+    query='SELECT * FROM tabla',
+    connection='postgresql://user:pass@host:5432/db',
+    engine='connectorx'  # Más rápido
+)
+________________________________________
+💾 ESCRIBIR ARCHIVOS
+CSV
+python
+df.write_csv('salida.csv')
+df.write_csv('salida.csv', separator=';', include_header=True)
+Excel
+python
+# Básico
+df.write_excel('salida.xlsx')
+
+# Con formato
+df.write_excel(
+    'salida.xlsx',
+    table_style='TableStyleMedium9',
+    column_formats={'precio': '"$"#,##0.00'},
+    autofit=True,
+    sheet_name='MisDatos'
+)
+
+# Múltiples hojas
+with pl.ExcelWriter('reporte.xlsx') as writer:
+    df1.write_excel(workbook=writer, worksheet='Hoja1')
+    df2.write_excel(workbook=writer, worksheet='Hoja2')
+Parquet
+python
+df.write_parquet('salida.parquet')
+df.write_parquet('salida.parquet', compression='zstd')  # snappy, gzip, lz4
+Base de datos
+python
+# Usando engine.begin() para transacciones
+with engine.begin() as conn:
+    df.write_database(
+        table_name='mi_tabla',
+        connection=conn,
+        if_table_exists='replace'  # replace, append, fail
+    )
+________________________________________
+🎯 SELECCIÓN Y FILTRADO
+Seleccionar columnas
+python
+# Por nombre
+df.select(['nombre', 'edad'])
+
+# Por índice
+df.select(df.columns[0:3])  # Primeras 3 columnas
+
+# Por patrón
+df.select(pl.col('^col_'))       # Regex: empieza con 'col_'
+df.select(pl.col('*_date'))      # Termina con '_date'
+
+# Excluir columnas
+df.select(pl.exclude('id', 'timestamp'))
+Filtrado
+python
+# Condiciones básicas
+df.filter(pl.col('edad') > 25)
+df.filter(pl.col('nombre') == 'Ana')
+
+# Múltiples condiciones
+df.filter(
+    (pl.col('edad') > 25) & 
+    (pl.col('ciudad') == 'Madrid') &
+    (pl.col('activo') == True)
+)
+
+# Operadores lógicos
+df.filter((pl.col('edad') > 30) | (pl.col('edad') < 20))
+df.filter(~pl.col('nombre').is_in(['Ana', 'Juan']))
+
+# Filtros avanzados
+df.filter(pl.col('email').str.contains('@gmail.com'))
+df.filter(pl.col('nombre').str.starts_with('A'))
+df.filter(pl.col('texto').str.lengths() > 100)
+Slice y head/tail
+python
+df.head(10)        # Primeras 10 filas
+df.tail(5)         # Últimas 5 filas
+df.slice(10, 20)   # Filas 10 a 29 (20 filas desde posición 10)
+df.sample(5)       # 5 filas aleatorias
+________________________________________
+🔧 MANIPULACIÓN DE DATOS
+Añadir columnas
+python
+df = df.with_columns(
+    # Nueva columna
+    pl.lit('valor').alias('nueva_col'),
+    
+    # Transformación
+    (pl.col('precio') * 1.21).alias('precio_con_iva'),
+    
+    # Condicional
+    pl.when(pl.col('edad') > 65)
+      .then('Jubilado')
+      .otherwise('Activo').alias('estado'),
+    
+    # Fecha
+    pl.col('fecha').dt.year().alias('año')
+)
+Renombrar columnas
+python
+df.rename({'nombre_viejo': 'nombre_nuevo'})
+df.rename(lambda x: x.upper())  # Todas a mayúsculas
+Tipos de datos
+python
+# Convertir tipos
+df = df.with_columns(
+    pl.col('edad').cast(pl.Int32),
+    pl.col('precio').cast(pl.Float64),
+    pl.col('fecha_str').str.strptime(pl.Date, '%Y-%m-%d')
+)
+
+# Ver esquema
+print(df.schema)
+Valores nulos
+python
+# Rellenar nulos
+df.fill_null(0)
+df.fill_null(strategy='forward')  # forward, backward
+
+# Eliminar nulos
+df.drop_nulls()
+df.drop_nulls(subset=['col1', 'col2'])
+
+# Verificar nulos
+df.null_count()
+Ordenar
+python
+df.sort('edad')
+df.sort(['ciudad', 'edad'], descending=[False, True])
+Valores únicos
+python
+df.unique()                    # Filas únicas
+df.unique(subset=['col1'])     # Únicos por columna
+df.n_unique()                  # Cantidad de únicos
+________________________________________
+📊 AGREGACIONES
+Funciones básicas
+python
+df.select(
+    pl.col('edad').mean(),
+    pl.col('salario').sum(),
+    pl.col('nombre').count(),
+    pl.col('fecha').min(),
+    pl.col('fecha').max(),
+    pl.col('valor').std(),
+    pl.col('valor').median()
+)
+Descriptivas
+python
+df.describe()
+df.select(pl.all().summary())
+________________________________________
+🔗 UNIONES (JOINS)
+Tipos de join
+python
+# Inner join (default)
+df1.join(df2, on='id')
+
+# Left join
+df1.join(df2, on='id', how='left')
+
+# Full outer join
+df1.join(df2, on='id', how='full')
+
+# Cross join
+df1.join(df2, how='cross')
+
+# Con nombres diferentes
+df1.join(df2, left_on='id_cliente', right_on='id')
+Concatenar
+python
+pl.concat([df1, df2, df3])               # Vertical
+pl.concat([df1, df2], how='horizontal')  # Horizontal
+________________________________________
+👥 AGRUPACIONES
+Group by básico
+python
+df.group_by('departamento').agg(
+    pl.col('salario').mean().alias('salario_promedio'),
+    pl.col('nombre').count().alias('num_empleados'),
+    pl.col('edad').max().alias('edad_maxima')
+)
+Agrupaciones avanzadas
+python
+# Múltiples agrupaciones
+df.group_by(['departamento', 'cargo']).agg(
+    pl.col('salario').mean()
+)
+
+# Con filtro
+df.group_by('departamento').agg(
+    pl.col('salario').filter(pl.col('edad') > 30).mean()
+)
+
+# Ventanas (Window functions)
+df.with_columns(
+    pl.col('ventas').mean().over('departamento').alias('promedio_depto'),
+    pl.col('ventas').rank().over('fecha').alias('ranking_dia')
+)
+________________________________________
+🧮 SERIES Y EXPRESIONES
+Operaciones con columnas
+python
+# Aritméticas
+df.with_columns(
+    (pl.col('precio') * pl.col('cantidad')).alias('total'),
+    (pl.col('ventas_2024') - pl.col('ventas_2023')).alias('crecimiento')
+)
+
+# Strings
+df.with_columns(
+    pl.col('nombre').str.to_uppercase(),
+    pl.col('email').str.split('@').list.first().alias('usuario'),
+    pl.col('texto').str.replace('viejo', 'nuevo')
+)
+
+# Fechas
+df.with_columns(
+    pl.col('fecha').dt.year().alias('año'),
+    pl.col('fecha').dt.month().alias('mes'),
+    pl.col('fecha').dt.weekday().alias('dia_semana'),
+    (pl.col('fecha_fin') - pl.col('fecha_inicio')).alias('duracion')
+)
+Funciones personalizadas
+python
+# Aplicar función
+df.with_columns(
+    pl.col('texto').map_elements(
+        lambda x: len(x) if x else 0,
+        return_dtype=pl.Int64
+    ).alias('longitud')
+)
+
+# Más eficiente con str.lengths()
+df.with_columns(
+    pl.col('texto').str.lengths().alias('longitud')
+)
+________________________________________
+🗃️ SQL CON POLARS
+python
+# Ejecutar SQL sobre DataFrames Polars
+result = pl.sql(
+    """
+    SELECT 
+        departamento,
+        AVG(salario) as salario_promedio,
+        COUNT(*) as num_empleados
+    FROM df
+    WHERE edad > 25
+    GROUP BY departamento
+    HAVING COUNT(*) > 5
+    ORDER BY salario_promedio DESC
+    """,
+    register_globals=True  # Usa DataFrames en scope
+)
+________________________________________
+⚡ TIPS AVANZADOS
+Lazy evaluation (Para grandes datasets)
+python
+# Crear LazyFrame
+lazy_df = pl.scan_csv('grande.csv')
+
+# Construir pipeline
+resultado = (lazy_df
+    .filter(pl.col('edad') > 25)
+    .group_by('ciudad')
+    .agg(pl.col('salario').mean())
+    .sort('salario')
+    .collect()  # Ejecutar al final
+)
+Particionado (Chunking)
+python
+# Procesar por partes
+for chunk in pl.read_csv('muy_grande.csv', batch_size=50000):
+    procesar(chunk)
+Configuración
+python
+# Configurar Polars
+pl.Config.set_tbl_rows(20)      # Filas a mostrar
+pl.Config.set_tbl_cols(10)      # Columnas a mostrar  
+pl.Config.set_float_precision(2)  # Decimales
+Interoperabilidad
+python
+# Polars ↔ Pandas
+df_pandas = df.to_pandas()
+df_polars = pl.from_pandas(df_pandas)
+
+# Polars ↔ NumPy
+arr = df.to_numpy()
+df = pl.from_numpy(arr, schema=['col1', 'col2'])
+
+# Polars ↔ Arrow
+table = df.to_arrow()
+df = pl.from_arrow(table)
+Optimización de memoria
+python
+# Tipos optimizados
+df.with_columns(
+    pl.col('edad').cast(pl.UInt8),      # 0-255
+    pl.col('id').cast(pl.Int32),        # 4 bytes vs 8
+    pl.col('activo').cast(pl.Boolean)   # 1 byte
+)
+________________________________________
+🎨 EJEMPLOS PRÁCTICOS
+Pipeline completo ETL
+python
+def etl_pipeline():
+    # Extract
+    df = pl.read_csv('datos_crudos.csv')
+    
+    # Transform
+    df = (df
+        .filter(pl.col('edad') >= 18)
+        .with_columns([
+            pl.col('nombre').str.to_titlecase(),
+            (pl.col('ventas') * 1.21).alias('ventas_con_iva'),
+            pl.when(pl.col('puntuacion') > 80)
+              .then('Excelente')
+              .otherwise('Regular').alias('categoria')
+        ])
+        .drop_nulls()
+    )
+    
+    # Load
+    df.write_parquet('datos_procesados.parquet')
+    return df
+Análisis de ventas
+python
+analisis = (df_ventas
+    .group_by(['producto', pl.col('fecha').dt.month()])
+    .agg([
+        pl.col('cantidad').sum().alias('total_vendido'),
+        pl.col('precio').mean().alias('precio_promedio'),
+        (pl.col('precio') * pl.col('cantidad')).sum().alias('ingresos')
+    ])
+    .sort(['producto', 'fecha'])
+    .pivot(
+        index='producto',
+        columns='fecha',
+        values='ingresos'
+    )
+)
+________________________________________
+📌 ERRORES COMUNES Y SOLUCIONES
+python
+# ❌ Error: Usar 'and'/'or' Python
+# df.filter(pl.col('edad') > 18 and pl.col('edad') < 65)
+
+# ✅ Usar operadores bitwise
+df.filter((pl.col('edad') > 18) & (pl.col('edad') < 65))
+
+# ❌ Error: Olvidar .collect() en LazyFrame
+# lazy_df.filter(...)
+
+# ✅ Ejecutar con .collect()
+lazy_df.filter(...).collect()
+
+# ❌ Error: Confundir pl.col() con df[col]
+# df.filter(df['edad'] > 25)
+
+# ✅ Usar siempre pl.col()
+df.filter(pl.col('edad') > 25)
+
+
+Apuntes random
+# Crear df
+df = pl.DataFrame({
+    'name': ['Alice', 'Bob', 'Charlie'],
+    'age': [25, 30 ,35],
+})
+
+# Crear un series
+serie = pl.Series([i for i in range(10)])
+
+# Seleccionar una columna
+selected_df = df.select('name')
+
+# Operaciones de manipulacion
+# Filtrar
+df_filtered =  df.filter((pl.col('name') != 'Bob') & (pl.col('age') > 25))
+
+# Sort
+sorted_df = df.sort('age', descending=True)
+
+
+
+# leer escribir archivos
+#csv
+df_csv = pl.read_csv(r'C:\Users\thede\OneDrive\Documentos\Coding\Python\test.csv', separator=',')
+df.write_csv(r'C:\Users\thede\OneDrive\Documentos\Coding\Python\test.csv')
+#Excel
+df_excel = pl.read_excel(r'C:\Users\thede\OneDrive\Documentos\Coding\Python\test.xlsx',
+                         sheet_name='hoja245',
+                         columns=[0,1] #para columns se pueden usar indices [0,1,4,9], nombres ['name', 'age'] o slice slice(0,5) (es no inclusivo)
+                         ).rename({
+                            'name': 'name',
+                            'age': 'age'
+                        }) # para renombrar columnas tambien se puede usar .selected([pl.col('name').alias('otro_nombre') pero rename es mas legible
+df.write_excel(r'C:\Users\thede\OneDrive\Documentos\Coding\Python\test.xlsx', worksheet='hoja245', position="B1")
+#parquet
+df = pl.DataFrame({
+    'id': range(1_000_000),
+    'valor': np.random.randn(1_000_000),
+    'categoria': ['A', 'B', 'C'] * 333_333 + ['A']
+})
+
+# Guardar como Parquet (≈ 3MB)
+df.write_parquet(r'C:\Users\thede\OneDrive\Documentos\Coding\Python\test.parquet')
+
+# LEER (solo columnas necesarias)
+# Lee SOLO la columna 'categoria'
+df_parquet_filtrado = pl.read_parquet(
+    r'C:\Users\thede\OneDrive\Documentos\Coding\Python\test.parquet',
+    columns=['categoria']  # ← ¡Solo lee esta columna!
+)
+
+# Leer con filtro pushdown
+df_parquet_filtrado = pl.scan_parquet(r'C:\Users\thede\OneDrive\Documentos\Coding\Python\test.parquet') \
+    .filter(pl.col('valor') > 0) \
+    .collect()
+# SQL
+base = r'C:\Users\thede\OneDrive\Documentos\Coding\Sql\usuarios.db'
+engine = create_engine(f"sqlite:///{base}")
+
+try:
+    with engine.begin() as conn:  # <-- inicia transacción real
+        df_sql = pl.read_database(
+            query='SELECT * FROM turnos_medicos',
+            connection=conn
+        )
+
+        df_sql.write_database(
+            table_name='test',
+            connection=conn,
+            if_table_exists='replace'
+        )
+
+    print('ok')
+
+except Exception as e:
+    print(e)
+
