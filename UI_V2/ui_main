@@ -1,0 +1,138 @@
+# ui_main.py
+import customtkinter as ctk
+import os
+from db_manager import get_all_desarrollos, get_all_responsables, get_nombre_por_clave, es_admin_o_gerente
+from ui_detalle import open_detalle_window
+
+class MainView(ctk.CTkFrame):
+    def __init__(self, parent, on_new_click):
+        super().__init__(parent)
+        self.on_new_click = on_new_click
+        
+        # ✅ Obtener clave y rol DENTRO de la clase (después de init_db)
+        self.clave_usuario_actual = os.getlogin()
+        self.usuario_es_admin = es_admin_o_gerente(self.clave_usuario_actual)
+        
+        self.filtro_responsable = ctk.StringVar(value="")
+        self.filtro_estatus = ctk.StringVar(value="")
+        self.filtro_prioridad = ctk.StringVar(value="")
+        self.create_widgets()
+        self.load_filter_options()
+        self.load_data()
+
+    def create_widgets(self):
+        # Botones principales
+        btn_frame = ctk.CTkFrame(self)
+        btn_frame.pack(pady=10)
+        ctk.CTkButton(btn_frame, text="🆕 Nuevo Desarrollo", command=self.on_new_click).pack(side="left", padx=5)
+        ctk.CTkButton(btn_frame, text="🔍 Verificar fases vencidas", command=self.verificar_y_notificar).pack(side="left", padx=5)
+
+        # Filtros
+        filter_frame = ctk.CTkFrame(self)
+        filter_frame.pack(pady=10, padx=20, fill="x")
+
+        if self.usuario_es_admin:
+            ctk.CTkLabel(filter_frame, text="Responsable:").pack(side="left", padx=(10,5))
+            self.combo_responsable = ctk.CTkComboBox(
+                filter_frame, variable=self.filtro_responsable, values=[""], width=180, command=self.on_filter_change
+            )
+            self.combo_responsable.pack(side="left", padx=5)
+
+        ctk.CTkLabel(filter_frame, text="Estatus:").pack(side="left", padx=(15,5))
+        self.combo_estatus = ctk.CTkComboBox(
+            filter_frame, variable=self.filtro_estatus,
+            values=["", "En análisis", "En desarrollo", "Pausado", "Finalizado"],
+            width=150, command=self.on_filter_change
+        )
+        self.combo_estatus.pack(side="left", padx=5)
+
+        ctk.CTkLabel(filter_frame, text="Prioridad:").pack(side="left", padx=(15,5))
+        self.combo_prioridad = ctk.CTkComboBox(
+            filter_frame, variable=self.filtro_prioridad,
+            values=["", "Baja", "Media", "Alta", "Crítica"],
+            width=120, command=self.on_filter_change
+        )
+        self.combo_prioridad.pack(side="left", padx=5)
+
+        ctk.CTkButton(filter_frame, text="🗑️ Limpiar", command=self.limpiar_filtros, width=80).pack(side="left", padx=15)
+
+        # Tabla
+        self.table_frame = ctk.CTkScrollableFrame(self)
+        self.table_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        headers = ["ID", "Reporte", "Responsable", "Estatus", "Prioridad", "Inicio", "Tecnología"]
+        for i, h in enumerate(headers):
+            lbl = ctk.CTkLabel(self.table_frame, text=h, font=("Arial", 12, "bold"))
+            lbl.grid(row=0, column=i, padx=5, pady=5)
+
+    def load_filter_options(self):
+        if self.usuario_es_admin:
+            responsables = get_all_responsables()
+            nombres = sorted(set(nombre for _, nombre, _ in responsables))
+            self.combo_responsable.configure(values=[""] + nombres)
+
+    def on_filter_change(self, event=None):
+        self.load_data()
+
+    def limpiar_filtros(self):
+        self.filtro_responsable.set("")
+        self.filtro_estatus.set("")
+        self.filtro_prioridad.set("")
+        self.load_data()
+
+    def load_data(self):
+        for widget in self.table_frame.winfo_children():
+            if int(widget.grid_info()["row"]) > 0:
+                widget.destroy()
+
+        desarrollos = get_all_desarrollos()
+
+        # Restricción por clave
+        if not self.usuario_es_admin:
+            desarrollos = [d for d in desarrollos if d["CLAVE_RESPONSABLE"] == self.clave_usuario_actual]
+
+        # Aplicar filtros
+        responsable_f = self.filtro_responsable.get()
+        estatus_f = self.filtro_estatus.get()
+        prioridad_f = self.filtro_prioridad.get()
+
+        filtered = []
+        for d in desarrollos:
+            if responsable_f:
+                nombre_responsable = get_nombre_por_clave(d["CLAVE_RESPONSABLE"])
+                if nombre_responsable != responsable_f:
+                    continue
+            if estatus_f and d["ESTATUS"] != estatus_f:
+                continue
+            if prioridad_f and d["PRIORIDAD"] != prioridad_f:
+                continue
+            filtered.append(d)
+
+        # Mostrar con colores
+        for row_idx, d in enumerate(filtered, start=1):
+            nombre_responsable = get_nombre_por_clave(d["CLAVE_RESPONSABLE"])
+            fields = [
+                str(d["ID"]),
+                d["REPORTE"] or "",
+                nombre_responsable,
+                d["ESTATUS"] or "",
+                d["PRIORIDAD"] or "Media",
+                d["FECHA_INICIO"] or "",
+                d["TECNOLOGIA_USADA"] or ""
+            ]
+
+            for col_idx, val in enumerate(fields):
+                if col_idx == 4:  # prioridad
+                    color_map = {"Crítica": "#FF4C4C", "Alta": "#FF9933", "Media": "#4CAF50", "Baja": "#9E9E9E"}
+                    color = color_map.get(val, "white")
+                    label = ctk.CTkLabel(self.table_frame, text=val, text_color=color, cursor="hand2")
+                else:
+                    label = ctk.CTkLabel(self.table_frame, text=val, cursor="hand2")
+                label.grid(row=row_idx, column=col_idx, padx=5, pady=3)
+                label.bind("<Button-1>", lambda e, dev_id=d["ID"]: open_detalle_window(self, dev_id))
+
+    def verificar_y_notificar(self):
+        # Aquí puedes implementar Teams o correo si lo deseas en el futuro
+        status = ctk.CTkLabel(self, text="✅ Función de alertas lista para implementar", text_color="green")
+        status.pack()
+        self.after(3000, status.destroy)
