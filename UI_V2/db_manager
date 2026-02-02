@@ -1,0 +1,190 @@
+# db_manager.py
+import sqlite3
+from pathlib import Path
+
+DB_PATH = Path("desarrollos.db")
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Tabla de responsables
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS RESPONSABLES (
+        CLAVE_EMPLEADO TEXT PRIMARY KEY,
+        NOMBRE_COMPLETO TEXT NOT NULL,
+        CORREO TEXT,
+        ROL TEXT DEFAULT 'usuario'
+    )
+    """)
+
+    # Insertar datos de ejemplo (ajusta según tu equipo)
+    ejemplo_responsables = [
+        ("K418822", "Diana Ruiz", "diana.ruiz@empresa.com", "usuario"),
+        ("M927364", "Carlos Méndez", "carlos.mendez@empresa.com", "usuario"),
+        ("A123456", "Ana López", "ana.lopez@empresa.com", "gerente"),
+        ("thede", "Tú (Admin)", "tu.correo@empresa.com", "admin")
+    ]
+    for clave, nombre, correo, rol in ejemplo_responsables:
+        cursor.execute("""
+            INSERT OR IGNORE INTO RESPONSABLES (CLAVE_EMPLEADO, NOMBRE_COMPLETO, CORREO, ROL)
+            VALUES (?, ?, ?, ?)
+        """, (clave, nombre, correo, rol))
+
+    # Tabla de desarrollos
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS DESARROLLOS (
+        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        REPORTE TEXT,
+        CLAVE_RESPONSABLE TEXT,
+        USUARIO_SOLICITANTE TEXT,
+        TECNOLOGIA_USADA TEXT,
+        FECHA_INICIO TEXT,
+        ESTATUS TEXT,
+        PRIORIDAD TEXT DEFAULT 'Media',
+        FOREIGN KEY(CLAVE_RESPONSABLE) REFERENCES RESPONSABLES(CLAVE_EMPLEADO)
+    )
+    """)
+
+    # Asegurar columna PRIORIDAD
+    cursor.execute("PRAGMA table_info(DESARROLLOS)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "PRIORIDAD" not in columns:
+        cursor.execute("ALTER TABLE DESARROLLOS ADD COLUMN PRIORIDAD TEXT DEFAULT 'Media'")
+
+    # Tabla de fases
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS FASES (
+        ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        ID_DESARROLLO INTEGER,
+        FASE TEXT,
+        DESCRIPCION TEXT,
+        FECHA_INICIO TEXT,
+        FECHA_FIN TEXT,
+        COMENTARIOS TEXT,
+        ESTATUS TEXT DEFAULT 'En progreso',
+        FOREIGN KEY(ID_DESARROLLO) REFERENCES DESARROLLOS(ID)
+    )
+    """)
+
+    conn.commit()
+    conn.close()
+
+# === Funciones de acceso a datos ===
+
+def get_all_responsables():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT CLAVE_EMPLEADO, NOMBRE_COMPLETO, CORREO FROM RESPONSABLES ORDER BY NOMBRE_COMPLETO")
+    rows = cursor.fetchall()
+    conn.close()
+    return [(r["CLAVE_EMPLEADO"], r["NOMBRE_COMPLETO"], r["CORREO"]) for r in rows]
+
+def get_nombre_por_clave(clave):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT NOMBRE_COMPLETO FROM RESPONSABLES WHERE CLAVE_EMPLEADO = ?", (clave,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else clave
+
+def get_correo_por_clave(clave):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT CORREO FROM RESPONSABLES WHERE CLAVE_EMPLEADO = ?", (clave,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def es_admin_o_gerente(clave):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT ROL FROM RESPONSABLES WHERE CLAVE_EMPLEADO = ?", (clave,))
+    row = cursor.fetchone()
+    conn.close()
+    return row and row[0] in ("admin", "gerente")
+
+def get_all_desarrollos():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM DESARROLLOS")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def get_desarrollo_by_id(id_dev):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM DESARROLLOS WHERE ID = ?", (id_dev,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+def get_fases_by_desarrollo(id_desarrollo):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM FASES WHERE ID_DESARROLLO = ?", (id_desarrollo,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def save_desarrollo(data):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO DESARROLLOS (
+            REPORTE, CLAVE_RESPONSABLE, USUARIO_SOLICITANTE,
+            TECNOLOGIA_USADA, FECHA_INICIO, ESTATUS, PRIORIDAD
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        data["REPORTE"],
+        data["CLAVE_RESPONSABLE"],
+        data["USUARIO_SOLICITANTE"],
+        data["TECNOLOGIA_USADA"],
+        data["FECHA_INICIO"],
+        data["ESTATUS"],
+        data["PRIORIDAD"]
+    ))
+    conn.commit()
+    last_id = cursor.lastrowid
+    conn.close()
+    return last_id
+
+def save_fase(id_desarrollo, fase_data):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO FASES (ID_DESARROLLO, FASE, DESCRIPCION, FECHA_INICIO, FECHA_FIN, COMENTARIOS, ESTATUS)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        id_desarrollo,
+        fase_data["FASE"],
+        fase_data["DESCRIPCION"],
+        fase_data["FECHA_INICIO"],
+        fase_data["FECHA_FIN"],
+        fase_data["COMENTARIOS"],
+        fase_data.get("ESTATUS", "En progreso")
+    ))
+    conn.commit()
+    conn.close()
+
+def get_fases_vencidas_sin_finalizar():
+    from datetime import date
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    hoy = date.today().isoformat()
+    cursor.execute("""
+        SELECT f.*, d.CLAVE_RESPONSABLE, d.REPORTE
+        FROM FASES f
+        JOIN DESARROLLOS d ON f.ID_DESARROLLO = d.ID
+        WHERE f.ESTATUS != 'Finalizada'
+          AND f.FECHA_FIN < ?
+    """, (hoy,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
