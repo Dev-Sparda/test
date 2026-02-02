@@ -1,0 +1,170 @@
+# ui_form_desarrollo.py
+import customtkinter as ctk
+from datetime import date
+from db_manager import get_all_responsables, save_desarrollo, save_fase
+from utils import create_textbox_with_placeholder
+
+class NuevoDesarrolloForm(ctk.CTkToplevel):
+    def __init__(self, parent, on_save):
+        super().__init__(parent)
+        self.title("Nuevo Desarrollo")
+        self.geometry("700x750")
+        self.lift()
+        self.focus_force()
+        self.attributes("-topmost", True)
+        self.after(100, lambda: self.attributes("-topmost", False))
+        
+        self.on_save = on_save
+        self.fases_widgets = []
+        self.create_form()
+
+    def create_form(self):
+        self.scroll_frame = ctk.CTkScrollableFrame(self)
+        self.scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Cargar responsables
+        responsables_data = get_all_responsables()  # (clave, nombre, correo)
+        self.clave_por_nombre = {nombre: clave for clave, nombre, _ in responsables_data}
+        nombres_responsables = [nombre for _, nombre, _ in responsables_data]
+        nombres_solicitantes = nombres_responsables  # mismo conjunto
+
+        self.entries = {}
+        current_row = 0
+
+        # Campos
+        fields = [
+            ("Reporte", "entry"),
+            ("Responsable Desarrollo", "combo_resp"),
+            ("Usuario Solicitante", "combo_solic"),
+            ("Tecnología Usada", "entry"),
+            ("Fecha Inicio", "date"),
+            ("Estatus", "combo_estatus"),
+            ("Prioridad", "combo_prioridad")
+        ]
+
+        for label, tipo in fields:
+            ctk.CTkLabel(self.scroll_frame, text=label).grid(row=current_row, column=0, sticky="w", padx=10, pady=5)
+            if tipo == "entry":
+                widget = ctk.CTkEntry(self.scroll_frame, width=400)
+            elif tipo == "date":
+                widget = ctk.CTkEntry(self.scroll_frame, width=400)
+                widget.insert(0, str(date.today()))
+            elif tipo == "combo_resp":
+                widget = ctk.CTkComboBox(self.scroll_frame, values=nombres_responsables, width=400)
+            elif tipo == "combo_solic":
+                widget = ctk.CTkComboBox(self.scroll_frame, values=nombres_solicitantes, width=400)
+            elif tipo == "combo_estatus":
+                opciones = ["En análisis", "En desarrollo", "Pausado", "Finalizado"]
+                widget = ctk.CTkComboBox(self.scroll_frame, values=opciones, width=400)
+                widget.set("En análisis")
+            elif tipo == "combo_prioridad":
+                opciones = ["Baja", "Media", "Alta", "Crítica"]
+                widget = ctk.CTkComboBox(self.scroll_frame, values=opciones, width=400)
+                widget.set("Media")
+            self.entries[label] = widget
+            widget.grid(row=current_row, column=1, padx=10, pady=5)
+            current_row += 1
+
+        # Botón Añadir Fase
+        self.btn_add_fase = ctk.CTkButton(
+            self.scroll_frame, text="➕ Añadir Fase", command=self.add_fase_section, height=35
+        )
+        self.btn_add_fase.grid(row=current_row, column=0, columnspan=2, pady=15)
+        current_row += 1
+
+        # Frame de fases
+        self.fases_frame = ctk.CTkFrame(self.scroll_frame)
+        self.fases_frame.grid(row=current_row, column=0, columnspan=2, sticky="ew", padx=5, pady=10)
+        current_row += 1
+
+        # Botón Guardar
+        self.btn_save = ctk.CTkButton(
+            self.scroll_frame, text="💾 Guardar Desarrollo", command=self.save, height=40, font=("Arial", 14, "bold")
+        )
+        self.btn_save.grid(row=current_row, column=0, columnspan=2, pady=20)
+
+        self.scroll_frame.columnconfigure(1, weight=1)
+
+    def add_fase_section(self):
+        frame = ctk.CTkFrame(self.fases_frame)
+        frame.pack(fill="x", padx=5, pady=10)
+
+        # Fila 1
+        ctk.CTkLabel(frame, text="Fase:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        ent_fase = ctk.CTkEntry(frame, width=180)
+        ent_fase.grid(row=0, column=1, padx=5, pady=2)
+
+        ctk.CTkLabel(frame, text="Descripción:").grid(row=0, column=2, sticky="w", padx=5, pady=2)
+        txt_desc = create_textbox_with_placeholder(frame, "Describe la fase...", width=250, height=60)
+        txt_desc.grid(row=0, column=3, padx=5, pady=2)
+
+        # Fila 2
+        ctk.CTkLabel(frame, text="Fecha Inicio:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        ent_ini = ctk.CTkEntry(frame, width=120)
+        ent_ini.grid(row=1, column=1, padx=5, pady=2)
+
+        ctk.CTkLabel(frame, text="Fecha Fin:").grid(row=1, column=2, sticky="w", padx=5, pady=2)
+        ent_fin = ctk.CTkEntry(frame, width=120)
+        ent_fin.grid(row=1, column=3, padx=5, pady=2)
+
+        # Fila 3
+        ctk.CTkLabel(frame, text="Estatus:").grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        opciones_estatus = ["En análisis", "En desarrollo", "Pausado", "Finalizada"]
+        combo_estatus = ctk.CTkComboBox(frame, values=opciones_estatus, width=150)
+        combo_estatus.set("En desarrollo")
+        combo_estatus.grid(row=2, column=1, padx=5, pady=2)
+
+        ctk.CTkLabel(frame, text="Comentarios:").grid(row=2, column=2, sticky="w", padx=5, pady=2)
+        ent_com = ctk.CTkEntry(frame, width=250)
+        ent_com.grid(row=2, column=3, padx=5, pady=2)
+
+        self.fases_widgets.append({
+            "FASE": ent_fase,
+            "DESCRIPCION": txt_desc,
+            "FECHA_INICIO": ent_ini,
+            "FECHA_FIN": ent_fin,
+            "COMENTARIOS": ent_com,
+            "ESTATUS": combo_estatus
+        })
+
+    def save(self):
+        responsable_nombre = self.entries["Responsable Desarrollo"].get()
+        solicitante_nombre = self.entries["Usuario Solicitante"].get()
+        if not responsable_nombre or not solicitante_nombre:
+            error = ctk.CTkLabel(self.scroll_frame, text="⚠️ Selecciona responsable y solicitante", text_color="red")
+            error.grid(row=1000, column=0, columnspan=2, pady=5)
+            self.after(3000, error.destroy)
+            return
+
+        clave_responsable = self.clave_por_nombre.get(responsable_nombre)
+        if not clave_responsable:
+            return
+
+        data = {
+            "REPORTE": self.entries["Reporte"].get(),
+            "CLAVE_RESPONSABLE": clave_responsable,
+            "USUARIO_SOLICITANTE": solicitante_nombre,
+            "TECNOLOGIA_USADA": self.entries["Tecnología Usada"].get(),
+            "FECHA_INICIO": self.entries["Fecha Inicio"].get(),
+            "ESTATUS": self.entries["Estatus"].get(),
+            "PRIORIDAD": self.entries["Prioridad"].get(),
+        }
+        id_dev = save_desarrollo(data)
+
+        for fase_widget in self.fases_widgets:
+            desc = fase_widget["DESCRIPCION"].get("1.0", "end-1c").strip()
+            if hasattr(fase_widget["DESCRIPCION"], "has_placeholder") and fase_widget["DESCRIPCION"].has_placeholder:
+                desc = ""
+
+            fase_data = {
+                "FASE": fase_widget["FASE"].get(),
+                "DESCRIPCION": desc,
+                "FECHA_INICIO": fase_widget["FECHA_INICIO"].get(),
+                "FECHA_FIN": fase_widget["FECHA_FIN"].get(),
+                "COMENTARIOS": fase_widget["COMENTARIOS"].get(),
+                "ESTATUS": fase_widget["ESTATUS"].get() or "En desarrollo"
+            }
+            save_fase(id_dev, fase_data)
+
+        self.on_save()
+        self.destroy()
