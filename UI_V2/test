@@ -1,0 +1,41 @@
+def guardar_nueva_fase():
+    print("🔍 Iniciando guardado de nueva fase...")  # ← Depuración
+    
+    fase_nombre = entry_fase.get().strip()
+    if not fase_nombre:
+        print("❌ Error: Nombre de fase vacío")
+        entry_fase.configure(border_color="red")
+        form_fase.after(2000, lambda: entry_fase.configure(border_color="#565B5E"))
+        return
+
+    desc_text = txt_desc.get("1.0", "end-1c").strip()
+    if hasattr(txt_desc, "has_placeholder") and txt_desc.has_placeholder:
+        desc_text = ""
+
+    print(f"📝 Datos a guardar: {fase_nombre}, {desc_text}, {entry_ini.get()}, {entry_fin.get()}")  # ← Depuración
+
+    try:
+        conn = sqlite3.connect("desarrollos.db")
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO FASES (ID_DESARROLLO, FASE, DESCRIPCION, FECHA_INICIO, FECHA_FIN, COMENTARIOS, ESTATUS)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            id_desarrollo,
+            fase_nombre,
+            desc_text,
+            entry_ini.get(),
+            entry_fin.get(),
+            entry_com.get(),
+            combo_estatus.get()
+        ))
+        conn.commit()
+        conn.close()
+        print("✅ Fase guardada exitosamente")  # ← Depuración
+        
+        form_fase.destroy()
+        top.destroy()
+        open_detalle_window(parent, id_desarrollo)
+        
+    except Exception as e:
+        print(f"❌ Error al guardar: {e}")  # ← ¡Esto es clave!
