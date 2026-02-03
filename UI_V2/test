@@ -1,41 +1,28 @@
-def guardar_nueva_fase():
-    print("🔍 Iniciando guardado de nueva fase...")  # ← Depuración
+# En ui_main.py
+def verificar_y_notificar(self):
+    from db_manager import get_fases_vencidas_sin_finalizar
+    from teams_notifier import enviar_alertas_por_responsable
+
+    fases = get_fases_vencidas_sin_finalizar()
     
-    fase_nombre = entry_fase.get().strip()
-    if not fase_nombre:
-        print("❌ Error: Nombre de fase vacío")
-        entry_fase.configure(border_color="red")
-        form_fase.after(2000, lambda: entry_fase.configure(border_color="#565B5E"))
+    if not fases:
+        status = ctk.CTkLabel(self, text="✅ No hay fases vencidas.", text_color="green")
+        status.pack()
+        self.after(3000, status.destroy)
         return
 
-    desc_text = txt_desc.get("1.0", "end-1c").strip()
-    if hasattr(txt_desc, "has_placeholder") and txt_desc.has_placeholder:
-        desc_text = ""
+    # Enviar tarjetas por responsable
+    resultados = enviar_alertas_por_responsable(fases)
+    total_exitos = sum(resultados.values())
+    
+    if total_exitos == len(resultados):
+        msg = f"✅ Alertas enviadas a {len(resultados)} responsable(s)"
+        color = "green"
+    else:
+        fallidos = [r for r, ok in resultados.items() if not ok]
+        msg = f"⚠️ Algunas alertas fallaron: {', '.join(fallidos)}"
+        color = "orange"
 
-    print(f"📝 Datos a guardar: {fase_nombre}, {desc_text}, {entry_ini.get()}, {entry_fin.get()}")  # ← Depuración
-
-    try:
-        conn = sqlite3.connect("desarrollos.db")
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO FASES (ID_DESARROLLO, FASE, DESCRIPCION, FECHA_INICIO, FECHA_FIN, COMENTARIOS, ESTATUS)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            id_desarrollo,
-            fase_nombre,
-            desc_text,
-            entry_ini.get(),
-            entry_fin.get(),
-            entry_com.get(),
-            combo_estatus.get()
-        ))
-        conn.commit()
-        conn.close()
-        print("✅ Fase guardada exitosamente")  # ← Depuración
-        
-        form_fase.destroy()
-        top.destroy()
-        open_detalle_window(parent, id_desarrollo)
-        
-    except Exception as e:
-        print(f"❌ Error al guardar: {e}")  # ← ¡Esto es clave!
+    status = ctk.CTkLabel(self, text=msg, text_color=color)
+    status.pack()
+    self.after(4000, status.destroy)
