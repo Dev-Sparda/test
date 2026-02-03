@@ -1,0 +1,84 @@
+# teams_notifier.py
+import requests
+from datetime import date
+
+# 🔑 PON TU WEBHOOK REAL AQUÍ
+TEAMS_WEBHOOK_URL = "https://tu-webhook-real-aqui..."
+
+def enviar_alerta_fases_vencidas(fases):
+    """
+    Envía una alerta a Teams con las fases vencidas usando Adaptive Cards.
+    :param fases: lista de filas sqlite3.Row con claves:
+                  FASE, REPORTE, FECHA_FIN, CLAVE_RESPONSABLE, ID_DESARROLLO
+    :return: True si se envió correctamente, False en caso contrario
+    """
+    if not fases:
+        return False
+
+    # Agrupar por responsable (opcional, para mejor organización)
+    from collections import defaultdict
+    agrupado = defaultdict(list)
+    for f in fases:
+        agrupado[f["CLAVE_RESPONSABLE"]].append(f)
+
+    # Construir el cuerpo de la tarjeta
+    body = [
+        {
+            "type": "TextBlock",
+            "text": f"📅 **Fases vencidas sin finalizar** ({date.today().isoformat()})",
+            "size": "Large",
+            "weight": "Bolder",
+            "color": "Attention",
+            "wrap": True
+        },
+        {
+            "type": "TextBlock",
+            "text": f"Total de fases vencidas: **{len(fases)}**",
+            "wrap": True
+        }
+    ]
+
+    # Agregar cada fase
+    for i, f in enumerate(fases):
+        if i >= 10:  # Límite para no saturar el mensaje
+            body.append({
+                "type": "TextBlock",
+                "text": f"... y {len(fases) - 10} fases más",
+                "italic": True,
+                "wrap": True
+            })
+            break
+        
+        body.append({
+            "type": "FactSet",
+            "facts": [
+                {"title": "Fase", "value": f["FASE"]},
+                {"title": "Desarrollo", "value": f["REPORTE"]},
+                {"title": "Venció", "value": f["FECHA_FIN"]},
+                {"title": "Responsable", "value": f["CLAVE_RESPONSABLE"]},
+                {"title": "ID Desarrollo", "value": str(f["ID_DESARROLLO"])}
+            ]
+        })
+
+    # Estructura completa de Adaptive Card
+    adaptive_card = {
+        "type": "message",
+        "attachments": [{
+            "contentType": "application/vnd.microsoft.card.adaptive",
+            "contentUrl": None,
+            "content": {
+                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                "type": "AdaptiveCard",
+                "version": "1.2",
+                "body": body,
+                "actions": []  # Puedes añadir botones aquí si lo deseas
+            }
+        }]
+    }
+
+    try:
+        response = requests.post(TEAMS_WEBHOOK_URL, json=adaptive_card, timeout=10)
+        return response.status_code == 202
+    except Exception as e:
+        print(f"❌ Error al enviar a Teams: {e}")
+        return False
