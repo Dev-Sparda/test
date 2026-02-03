@@ -1,66 +1,87 @@
 # teams_notifier.py
 import requests
-from datetime import date
+from db_manager import get_nombre_por_clave, get_correo_por_clave
 
-# 🔑 PON TU WEBHOOK REAL AQUÍ
+# 🔑 Tu webhook aquí
 TEAMS_WEBHOOK_URL = "https://tu-webhook-real-aqui..."
 
-def enviar_alerta_fases_vencidas(fases):
+def enviar_alertas_por_responsable(fases):
     """
-    Envía una alerta a Teams con las fases vencidas usando Adaptive Cards.
+    Envía una tarjeta de Teams por cada responsable con fases vencidas.
     :param fases: lista de filas sqlite3.Row con claves:
                   FASE, REPORTE, FECHA_FIN, CLAVE_RESPONSABLE, ID_DESARROLLO
-    :return: True si se envió correctamente, False en caso contrario
+    :return: dict con resultados por responsable
     """
     if not fases:
-        return False
+        return {}
 
-    # Agrupar por responsable (opcional, para mejor organización)
+    # Agrupar fases por responsable
     from collections import defaultdict
     agrupado = defaultdict(list)
     for f in fases:
         agrupado[f["CLAVE_RESPONSABLE"]].append(f)
 
-    # Construir el cuerpo de la tarjeta
+    resultados = {}
+    
+    for clave_responsable, fases_lista in agrupado.items():
+        exito = enviar_tarjeta_responsable(clave_responsable, fases_lista)
+        resultados[clave_responsable] = exito
+    
+    return resultados
+
+def enviar_tarjeta_responsable(clave_responsable, fases):
+    """Envía una tarjeta para un responsable específico."""
+    nombre = get_nombre_por_clave(clave_responsable)
+    correo = get_correo_por_clave(clave_responsable)
+    
+    # Construir mención (solo si hay correo)
+    mencion = f"<at>{nombre}</at>" if correo else nombre
+    
     body = [
         {
             "type": "TextBlock",
-            "text": f"📅 **Fases vencidas sin finalizar** ({date.today().isoformat()})",
+            "text": f"🚨 **Fases vencidas** para {mencion}",
             "size": "Large",
             "weight": "Bolder",
             "color": "Attention",
             "wrap": True
-        },
-        {
-            "type": "TextBlock",
-            "text": f"Total de fases vencidas: **{len(fases)}**",
-            "wrap": True
         }
     ]
-
+    
     # Agregar cada fase
-    for i, f in enumerate(fases):
-        if i >= 10:  # Límite para no saturar el mensaje
-            body.append({
-                "type": "TextBlock",
-                "text": f"... y {len(fases) - 10} fases más",
-                "italic": True,
-                "wrap": True
-            })
-            break
-        
+    for f in fases[:10]:  # Límite razonable
         body.append({
             "type": "FactSet",
             "facts": [
                 {"title": "Fase", "value": f["FASE"]},
                 {"title": "Desarrollo", "value": f["REPORTE"]},
-                {"title": "Venció", "value": f["FECHA_FIN"]},
-                {"title": "Responsable", "value": f["CLAVE_RESPONSABLE"]},
+                {"title": "Fecha límite", "value": f["FECHA_FIN"]},
                 {"title": "ID Desarrollo", "value": str(f["ID_DESARROLLO"])}
             ]
         })
+    
+    if len(fases) > 10:
+        body.append({
+            "type": "TextBlock",
+            "text": f"+{len(fases)-10} fases adicionales",
+            "italic": True,
+            "wrap": True
+        })
 
-    # Estructura completa de Adaptive Card
+    # Si hay correo, incluir en 'msteams' para mención
+    msteams = None
+    if correo:
+        msteams = {
+            "entities": [{
+                "type": "mention",
+                "text": f"<at>{nombre}</at>",
+                "mentioned": {
+                    "id": correo,
+                    "name": nombre
+                }
+            }]
+        }
+
     adaptive_card = {
         "type": "message",
         "attachments": [{
@@ -71,7 +92,7 @@ def enviar_alerta_fases_vencidas(fases):
                 "type": "AdaptiveCard",
                 "version": "1.2",
                 "body": body,
-                "actions": []  # Puedes añadir botones aquí si lo deseas
+                "msteams": msteams  # ← Habilita menciones
             }
         }]
     }
@@ -80,5 +101,6 @@ def enviar_alerta_fases_vencidas(fases):
         response = requests.post(TEAMS_WEBHOOK_URL, json=adaptive_card, timeout=10)
         return response.status_code == 202
     except Exception as e:
-        print(f"❌ Error al enviar a Teams: {e}")
+        print(f"❌ Error al enviar a {nombre}: {e}")
         return False
+
