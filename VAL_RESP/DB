@@ -1,0 +1,141 @@
+-- ============================================================
+-- TABLA 1: TIPOS_VALIDACION
+-- ============================================================
+CREATE TABLE TIPOS_VALIDACION (
+    ID_TIPO INTEGER PRIMARY KEY,
+    NOMBRE TEXT NOT NULL UNIQUE,
+    DESCRIPCION TEXT NOT NULL
+);
+
+INSERT INTO TIPOS_VALIDACION (ID_TIPO, NOMBRE, DESCRIPCION) VALUES 
+(1, 'INSUMOS', 'Validación estructural en repositorio de insumos (iteración recursiva completa)'),
+(2, 'AREA_TRABAJO', 'Validación estructural en área de trabajo (iteración recursiva completa)'),
+(3, 'REPORTES_ENVIADOS', 'Validación cruzada con TB_ACUSES_SECCIONES (ID_PAQUETE + ID_SECCION)');
+
+-- ============================================================
+-- TABLA 2: CONFIG_VALIDACIONES
+-- ============================================================
+CREATE TABLE CONFIG_VALIDACIONES (
+    ID_CONFIG INTEGER PRIMARY KEY AUTOINCREMENT,
+    ID_TIPO INTEGER NOT NULL,
+    NOMBRE_LOGICO TEXT NOT NULL,
+    RUTA_BASE TEXT NOT NULL,
+    ID_PAQUETE INTEGER,
+    ID_SECCION INTEGER,
+    FECHA_INICIO_VALIDACION DATE,
+    PATRON_ARCHIVO TEXT,
+    ESTATUS INTEGER DEFAULT 1,
+    CREADO TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    CHECK (
+        (ID_TIPO IN (1, 2) AND ID_PAQUETE IS NULL AND ID_SECCION IS NULL AND FECHA_INICIO_VALIDACION IS NULL AND PATRON_ARCHIVO IS NULL)
+        OR
+        (ID_TIPO = 3 AND ID_PAQUETE IS NOT NULL AND ID_SECCION IS NOT NULL AND FECHA_INICIO_VALIDACION IS NOT NULL AND PATRON_ARCHIVO IS NOT NULL)
+    ),
+    FOREIGN KEY (ID_TIPO) REFERENCES TIPOS_VALIDACION(ID_TIPO)
+);
+
+-- ============================================================
+-- TABLA 3: CAT_TIPOS_EXCEPCION
+-- ============================================================
+CREATE TABLE CAT_TIPOS_EXCEPCION (
+    ID_TIPO_EXCEPCION INTEGER PRIMARY KEY,
+    NOMBRE TEXT NOT NULL UNIQUE,
+    DESCRIPCION TEXT NOT NULL,
+    REQUIERE_PARAMETRO_NUMERICO BOOLEAN DEFAULT 0,
+    REQUIERE_PARAMETRO_TEXTO BOOLEAN DEFAULT 0,
+    EJEMPLO_USO TEXT
+);
+
+INSERT INTO CAT_TIPOS_EXCEPCION VALUES 
+(1, 'MULTIPLES_ARCHIVOS_POR_TRANSMISION', 'Una transmisión corresponde a N archivos físicos', 1, 0, 'Enero 2025 requiere archivo principal + anexo'),
+(2, 'TRANSMISION_DUPLICADA', 'Mismo archivo contado como múltiples transmisiones por error del área destino', 0, 0, 'Bug recurrente: área genera 2 acuses para 1 archivo'),
+(3, 'SIN_VALIDACION_NOMENCLATURA', 'Omitir validación de estructura de nombre para este caso', 0, 0, 'Archivos legacy con formato antiguo'),
+(4, 'PATRON_ARCHIVO_ESPECIAL', 'Usar patrón de nombre alternativo para fecha específica', 0, 1, 'Migración temporal: patrón "MIGRACION_X_%Y%m"');
+
+-- ============================================================
+-- TABLA 4: EXCEPCIONES_VALIDACION
+-- ============================================================
+CREATE TABLE EXCEPCIONES_VALIDACION (
+    ID_EXCEPCION INTEGER PRIMARY KEY AUTOINCREMENT,
+    ID_CONFIG INTEGER NOT NULL,
+    ID_TIPO_EXCEPCION INTEGER NOT NULL,
+    FECHA_DATOS_EXCEPCION DATE,
+    PARAMETRO_NUMERICO INTEGER,
+    PARAMETRO_TEXTO TEXT,
+    JUSTIFICACION TEXT NOT NULL,
+    ESTATUS INTEGER DEFAULT 1,
+    CREADO TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    CHECK (
+        (ID_TIPO_EXCEPCION = 1 AND PARAMETRO_NUMERICO IS NOT NULL AND PARAMETRO_TEXTO IS NULL) OR
+        (ID_TIPO_EXCEPCION = 2 AND PARAMETRO_NUMERICO IS NULL AND PARAMETRO_TEXTO IS NULL) OR
+        (ID_TIPO_EXCEPCION = 3 AND PARAMETRO_NUMERICO IS NULL AND PARAMETRO_TEXTO IS NULL) OR
+        (ID_TIPO_EXCEPCION = 4 AND PARAMETRO_NUMERICO IS NULL AND PARAMETRO_TEXTO IS NOT NULL)
+    ),
+    
+    FOREIGN KEY (ID_CONFIG) REFERENCES CONFIG_VALIDACIONES(ID_CONFIG),
+    FOREIGN KEY (ID_TIPO_EXCEPCION) REFERENCES CAT_TIPOS_EXCEPCION(ID_TIPO_EXCEPCION)
+);
+
+-- ============================================================
+-- TABLA 5: RESULTADOS_ESTRUCTURA (Tipos 1 y 2)
+-- ============================================================
+CREATE TABLE RESULTADOS_ESTRUCTURA (
+    ID_RESULTADO INTEGER PRIMARY KEY AUTOINCREMENT,
+    ID_CONFIG INTEGER NOT NULL,
+    FECHA_EJECUCION DATE DEFAULT CURRENT_DATE,
+    TIPO_VALIDACION TEXT NOT NULL,
+    
+    -- Agrupamiento
+    RUTA_RELATIVA_CARPETA TEXT,
+    PATRON_ERROR TEXT NOT NULL,
+    CANTIDAD_ARCHIVOS_AFECTADOS INTEGER NOT NULL,
+    EJEMPLO_ARCHIVO TEXT NOT NULL,
+    
+    -- Detalle
+    INCONSISTENCIA TEXT NOT NULL,
+    
+    FOREIGN KEY (ID_CONFIG) REFERENCES CONFIG_VALIDACIONES(ID_CONFIG)
+);
+
+-- ============================================================
+-- TABLA 6: RESULTADOS_TRANSMISIONES (Tipo 3)
+-- ============================================================
+CREATE TABLE RESULTADOS_TRANSMISIONES (
+    ID_RESULTADO INTEGER PRIMARY KEY AUTOINCREMENT,
+    ID_CONFIG INTEGER NOT NULL,
+    FECHA_EJECUCION DATE DEFAULT CURRENT_DATE,
+    
+    -- Contexto específico del acuse procesado (NO redundante)
+    FECHA_DATOS_ACUSE DATE NOT NULL,          -- Viene de TB_ACUSES_SECCIONES, específica por ejecución
+    TRANSMISIONES_ESPERADAS INTEGER NOT NULL, -- Valor de columna "Transmision" en el momento de la validación
+    
+    -- Resultados de la búsqueda
+    PATRON_ARCHIVO_APLICADO TEXT NOT NULL,    -- Patrón strftime aplicado para esta fecha específica
+    ARCHIVOS_ENCONTRADOS INTEGER NOT NULL,    -- Conteo real en el repositorio
+    ARCHIVOS_VALIDOS INTEGER NOT NULL,        -- Archivos que pasaron validación de nomenclatura
+    
+    -- Detalle del resultado
+    INCONSISTENCIA TEXT,                      -- NULL si válido
+    
+    FOREIGN KEY (ID_CONFIG) REFERENCES CONFIG_VALIDACIONES(ID_CONFIG)
+);
+
+
+
+-- Obtener resultado + datos maestros de la configuración
+SELECT 
+    rt.ID_RESULTADO,
+    rt.FECHA_EJECUCION,
+    rt.FECHA_DATOS_ACUSE,
+    rt.TRANSMISIONES_ESPERADAS,
+    rt.ARCHIVOS_VALIDOS,
+    rt.INCONSISTENCIA,
+    c.NOMBRE_LOGICO,
+    c.ID_PAQUETE,      -- Viene de CONFIG_VALIDACIONES (sin redundancia)
+    c.ID_SECCION,      -- Viene de CONFIG_VALIDACIONES (sin redundancia)
+    c.RUTA_BASE
+FROM RESULTADOS_TRANSMISIONES rt
+JOIN CONFIG_VALIDACIONES c ON rt.ID_CONFIG = c.ID_CONFIG
+WHERE rt.ID_RESULTADO = 123;
