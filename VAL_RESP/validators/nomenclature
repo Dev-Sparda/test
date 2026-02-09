@@ -1,0 +1,78 @@
+"""
+Validador de nomenclatura de archivos
+Formato: NombreLibre AAAA[MM[DD]] [V#] [TextoLibre].extension
+- Nombre libre: letras, numeros, espacios, guiones bajos (dentro del nombre)
+- ESPACIO OBLIGATORIO antes de la fecha
+- Fecha: AAAA, AAAAMM o AAAAMMDD (2000-2099)
+- Version opcional: V1, V2, etc.
+- Texto libre opcional
+- Extension obligatoria
+"""
+import re
+from datetime import datetime
+from typing import Tuple, Optional
+
+
+class ValidadorNomenclatura:
+    
+    PATRON = re.compile(
+        r'^'
+        r'([a-zA-Z0-9\s_]+)'        # Nombre libre (espacios/guiones bajos permitidos DENTRO)
+        r'\s+'                       # ESPACIO OBLIGATORIO antes de fecha
+        r'(\d{4}|\d{6}|\d{8})'      # Fecha: AAAA, AAAAMM o AAAAMMDD
+        r'(?:\s+(V\d+))?'           # Version opcional (V1, V2, etc.)
+        r'(?:\s+([a-zA-Z0-9\s_]*))?' # Texto libre opcional
+        r'\.([a-zA-Z0-9]{2,5})'     # Extension
+        r'$'
+    )
+    
+    PATRONES_ERROR = {
+        'FALTA_ESPACIO': 'Falta espacio obligatorio entre nombre y fecha',
+        'FECHA_INVALIDA': 'Fecha fuera de rango valido (2000-2099) o formato incorrecto',
+        'ESTRUCTURA_INVALIDA': 'Estructura del nombre no cumple el patron requerido',
+        'SIN_EXTENSION': 'Archivo sin extension'
+    }
+    
+    @classmethod
+    def validar(cls, nombre_archivo: str) -> Tuple[bool, Optional[str]]:
+        """
+        Retorna: (es_valido, tipo_error | None)
+        """
+        from utils.helpers import es_archivo_valido
+        if not es_archivo_valido(nombre_archivo):
+            return True, None  # Ignorar temporales
+        
+        if '.' not in nombre_archivo:
+            return False, 'SIN_EXTENSION'
+        
+        match = cls.PATRON.match(nombre_archivo)
+        if not match:
+            if re.search(r'[a-zA-Z0-9_]\d{4,8}\.', nombre_archivo):
+                return False, 'FALTA_ESPACIO'
+            return False, 'ESTRUCTURA_INVALIDA'
+        
+        fecha_str = match.group(2)
+        if not cls._validar_fecha(fecha_str):
+            return False, 'FECHA_INVALIDA'
+        
+        return True, None
+    
+    @classmethod
+    def _validar_fecha(cls, fecha_str: str) -> bool:
+        """Valida AAAA, AAAAMM o AAAAMMDD en rango 2000-2099"""
+        try:
+            anio = int(fecha_str[:4])
+            if not (2000 <= anio <= 2099):
+                return False
+            
+            if len(fecha_str) == 6:  # AAAAMM
+                datetime.strptime(fecha_str, '%Y%m')
+            elif len(fecha_str) == 8:  # AAAAMMDD
+                datetime.strptime(fecha_str, '%Y%m%d')
+            return True
+        except:
+            return False
+    
+    @classmethod
+    def obtener_descripcion(cls, patron_error: str) -> str:
+        return cls.PATRONES_ERROR.get(patron_error, 'Error desconocido')
