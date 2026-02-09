@@ -1,0 +1,14 @@
+Configuración de rutas a bases de datos
+Personaliza estas rutas según tu entorno
+"""
+import os
+from pathlib import Path
+
+# Base de datos del validador (nueva)
+DB_VALIDACION = Path("C:/Users/thede/OneDrive/Documentos/Coding/Python/validador/basesmock/valid.db")
+
+# Base de datos de envíos existente (con TB_ACUSES_SECCIONES)
+DB_ENVIOS = Path("C:/Users/thede/OneDrive/Documentos/Coding/Python/validador/basesmock/tb_acuses_mock.db")  # Ajusta según tu ruta real
+
+# Logging
+LOG_FILE = Path("validador.log")
