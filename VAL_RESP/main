@@ -1,0 +1,92 @@
+"""
+Orquestador principal del validador de respaldos
+"""
+import sys
+import os
+
+# Forzar UTF-8 en Windows
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        os.environ['PYTHONIOENCODING'] = 'utf-8'
+
+from db.db_manager import DBManager
+from validators.estructura import ValidadorEstructura
+from validators.transmisiones import ValidadorTransmisiones
+
+
+def main():
+    print("=" * 60)
+    print("VALIDADOR DE RESPALDOS - INICIANDO")
+    print("=" * 60)
+    
+    db = DBManager()
+    try:
+        configs = db.obtener_configuraciones_activas()
+        
+        if not configs:
+            print("WARNING: No hay configuraciones activas en CONFIG_VALIDACIONES")
+            return
+        
+        print(f"INFO: Configuraciones activas encontradas: {len(configs)}\n")
+        
+        # Separar por tipo
+        configs_tipo1 = [c for c in configs if c['ID_TIPO'] == 1]  # INSUMOS
+        configs_tipo2 = [c for c in configs if c['ID_TIPO'] == 2]  # AREA_TRABAJO
+        configs_tipo3 = [c for c in configs if c['ID_TIPO'] == 3]  # REPORTES_ENVIADOS
+        configs_tipo4 = [c for c in configs if c['ID_TIPO'] == 4]  # ACUSES
+        
+        # Validacion tipo 1: INSUMOS (agrupado)
+        if configs_tipo1:
+            print("\n" + "=" * 60)
+            print("VALIDACION 1: REPOSITORIO DE INSUMOS (AGRUPADO)")
+            print("=" * 60)
+            validador = ValidadorEstructura(db)
+            for config in configs_tipo1:
+                validador.validar(config, 'INSUMOS')
+        
+        # Validacion tipo 2: AREA_TRABAJO (agrupado)
+        if configs_tipo2:
+            print("\n" + "=" * 60)
+            print("VALIDACION 2: AREA DE TRABAJO (AGRUPADO)")
+            print("=" * 60)
+            validador = ValidadorEstructura(db)
+            for config in configs_tipo2:
+                validador.validar(config, 'AREA_TRABAJO')
+        
+        # Validacion tipo 4: ACUSES (agrupado)
+        if configs_tipo4:
+            print("\n" + "=" * 60)
+            print("VALIDACION 4: CARPETA ACUSES (AGRUPADO)")
+            print("=" * 60)
+            validador = ValidadorEstructura(db)
+            for config in configs_tipo4:
+                validador.validar(config, 'ACUSES')
+        
+        # Validacion tipo 3: REPORTES_ENVIADOS (sin agrupar)
+        if configs_tipo3:
+            print("\n" + "=" * 60)
+            print("VALIDACION 3: REPORTES ENVIADOS (SIN AGRUPAR)")
+            print("=" * 60)
+            validador = ValidadorTransmisiones(db)
+            for config in configs_tipo3:
+                validador.validar(config)
+        
+        print("\n" + "=" * 60)
+        print("EJECUCION COMPLETADA")
+        print("=" * 60)
+    
+    except Exception as e:
+        print(f"\nERROR CRITICO: {str(e)}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+    
+    finally:
+        db.desconectar()
+
+
+if __name__ == "__main__":
+    main()
