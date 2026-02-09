@@ -1,0 +1,30 @@
+"""
+Inicializa la base de datos con el esquema completo
+"""
+import sqlite3
+from pathlib import Path
+from config import DB_VALIDACION
+
+
+def main():
+    print("INFO: Inicializando base de datos...")
+    
+    # Crear directorio si no existe
+    DB_VALIDACION.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Leer schema
+    with open("db/schema.sql", "r", encoding="utf-8") as f:
+        schema = f.read()
+    
+    # Ejecutar
+    conn = sqlite3.connect(str(DB_VALIDACION))
+    conn.executescript(schema)
+    conn.commit()
+    conn.close()
+    
+    print("OK: Base de datos inicializada correctamente")
+    print(f"   Ubicacion: {DB_VALIDACION.absolute()}")
+
+
+if __name__ == "__main__":
+    main()
