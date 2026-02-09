@@ -1,0 +1,67 @@
+"""
+Validador para tipos 1, 2 y 4: agrupa errores por carpeta
+"""
+from pathlib import Path
+from typing import Dict
+from validators.nomenclature import ValidadorNomenclatura
+
+
+class ValidadorEstructura:
+    
+    def __init__(self, db_manager):
+        self.db = db_manager
+        self.validador = ValidadorNomenclatura()
+    
+    def validar(self, config: Dict, tipo_validacion: str):
+        ruta_base = Path(config['RUTA_BASE'])
+        
+        if not ruta_base.exists():
+            print(f"WARNING: Ruta no encontrada: {ruta_base}")
+            return
+        
+        print(f"INFO: Validando {tipo_validacion}: {ruta_base}")
+        
+        # Agrupamiento: clave = (ruta_relativa, patron_error)
+        agrupados = {}
+        
+        total_archivos = 0
+        for archivo in ruta_base.rglob('*'):
+            if not archivo.is_file():
+                continue
+            
+            total_archivos += 1
+            
+            valido, error = self.validador.validar(archivo.name)
+            
+            if not valido and error:
+                try:
+                    ruta_rel = str(archivo.parent.relative_to(ruta_base))
+                except ValueError:
+                    ruta_rel = str(archivo.parent).replace(str(ruta_base), '').lstrip('\\/')
+                
+                clave = (ruta_rel, error)
+                if clave not in agrupados:
+                    agrupados[clave] = {
+                        'cantidad': 0,
+                        'ejemplo': archivo.name,
+                        'descripcion': self.validador.obtener_descripcion(error)
+                    }
+                
+                agrupados[clave]['cantidad'] += 1
+        
+        # Guardar resultados agrupados
+        total_errores = 0
+        for (ruta_rel, error_tipo), datos in agrupados.items():
+            resultado = {
+                'ID_CONFIG': config['ID_CONFIG'],
+                'TIPO_VALIDACION': tipo_validacion,
+                'RUTA_RELATIVA_CARPETA': ruta_rel,
+                'PATRON_ERROR': error_tipo,
+                'CANTIDAD_ARCHIVOS_AFECTADOS': datos['cantidad'],
+                'EJEMPLO_ARCHIVO': datos['ejemplo'],
+                'INCONSISTENCIA': datos['descripcion']
+            }
+            self.db.guardar_resultado_estructura(resultado)
+            total_errores += datos['cantidad']
+        
+        print(f"RESUMEN: {total_archivos} archivos procesados, {total_errores} errores en {len(agrupados)} carpetas")
