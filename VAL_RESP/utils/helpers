@@ -1,0 +1,20 @@
+"""
+Funciones auxiliares reutilizables
+"""
+from pathlib import Path
+
+
+def es_archivo_valido(nombre: str) -> bool:
+    """
+    Validacion preliminar: descartar archivos temporales
+    """
+    temporales = [
+        '~$',    # Office temporales
+        '.',     # Archivos ocultos
+        'Thumbs.db',
+        'desktop.ini',
+        '.tmp'
+    ]
+    
+    nombre_lower = nombre.lower()
+    return not any(nombre_lower.startswith(t) or nombre_lower.endswith(t) for t in temporales)
