@@ -1,0 +1,88 @@
+"""
+Validador para tipo 3: uno por acuse + manejo de excepciones
+"""
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, Optional
+from validators.nomenclature import ValidadorNomenclatura
+
+
+class ValidadorTransmisiones:
+    
+    def __init__(self, db_manager):
+        self.db = db_manager
+        self.validador = ValidadorNomenclatura()
+    
+    def validar(self, config: Dict):
+        print(f"INFO: Validando reporte: {config['NOMBRE_LOGICO']}")
+        
+        acuses = self.db.obtener_acuses(
+            config['ID_PAQUETE'],
+            config['ID_SECCION'],
+            config['FECHA_INICIO_VALIDACION']
+        )
+        
+        if not acuses:
+            print(f"WARNING: No se encontraron acuses para ID_PAQUETE={config['ID_PAQUETE']}, ID_SECCION={config['ID_SECCION']}")
+            return
+        
+        print(f"INFO: Procesando {len(acuses)} acuses desde {config['FECHA_INICIO_VALIDACION']}")
+        
+        for acuse in acuses:
+            fecha_datos = datetime.strptime(acuse['FECHA_DATOS'], '%Y-%m-%d')
+            transmisiones_esperadas = acuse['Transmision']
+            
+            # Aplicar strftime a ruta y patron
+            ruta_fisica = fecha_datos.strftime(config['RUTA_BASE'])
+            patron_aplicado = fecha_datos.strftime(config['PATRON_ARCHIVO'])
+            
+            # Buscar excepcion aplicable
+            excepcion = self.db.obtener_excepcion_aplicable(
+                config['ID_CONFIG'],
+                acuse['FECHA_DATOS']
+            )
+            
+            # Calcular transmisiones ajustadas segun excepcion
+            transmisiones_ajustadas = transmisiones_esperadas
+            if excepcion:
+                if excepcion['ID_TIPO_EXCEPCION'] == 1:  # MULTIPLES_ARCHIVOS
+                    transmisiones_ajustadas = excepcion['PARAMETRO_NUMERICO']
+                elif excepcion['ID_TIPO_EXCEPCION'] == 2:  # TRANSMISION_DUPLICADA
+                    transmisiones_ajustadas = 1
+            
+            # Buscar y validar archivos
+            ruta_path = Path(ruta_fisica)
+            archivos_validos = 0
+            archivos_encontrados = 0
+            
+            if ruta_path.exists():
+                for archivo in ruta_path.iterdir():
+                    if archivo.is_file() and archivo.name.startswith(patron_aplicado):
+                        archivos_encontrados += 1
+                        valido, _ = self.validador.validar(archivo.name)
+                        if valido:
+                            archivos_validos += 1
+            
+            # Determinar inconsistencia
+            inconsistencia = None
+            if archivos_validos != transmisiones_ajustadas:
+                inconsistencia = (
+                    f"Esperadas {transmisiones_ajustadas} (ajustadas), "
+                    f"validos {archivos_validos}, encontrados {archivos_encontrados}"
+                )
+            
+            # Guardar resultado individual (sin agrupar)
+            resultado = {
+                'ID_CONFIG': config['ID_CONFIG'],
+                'FECHA_DATOS_ACUSE': acuse['FECHA_DATOS'],
+                'TRANSMISIONES_ESPERADAS': transmisiones_esperadas,
+                'TRANSMISIONES_ESPERADAS_AJUSTADAS': transmisiones_ajustadas,
+                'PATRON_ARCHIVO_APLICADO': patron_aplicado,
+                'ARCHIVOS_ENCONTRADOS': archivos_encontrados,
+                'ARCHIVOS_VALIDOS': archivos_validos,
+                'INCONSISTENCIA': inconsistencia
+            }
+            self.db.guardar_resultado_transmision(resultado)
+            
+            estado = "[OK]" if inconsistencia is None else "[ERROR]"
+            print(f"{estado} {acuse['FECHA_DATOS']}: esperadas={transmisiones_ajustadas}, validos={archivos_validos}, encontrados={archivos_encontrados}")
