@@ -6,76 +6,43 @@ from datetime import datetime
 class ValidadorSLA:
 
     def __init__(self, ruta_excel, schema):
-        """
-        schema: dict {nombre_columna: tipo_polars}
-        """
         self.ruta_excel = ruta_excel
         self.schema = schema
         self.conn = duckdb.connect(":memory:")
         self.df = None
 
-        # Tabla de errores estructurales
         self.conn.execute("""
             CREATE TABLE errores_estructura (
-                columna VARCHAR,
-                tipo_esperado VARCHAR,
+                error_mensaje VARCHAR,
                 fecha TIMESTAMP
             )
         """)
 
     def cargar_y_validar(self):
 
-        # 1️⃣ Leer una sola vez
-        df_raw = pl.read_excel(self.ruta_excel)
-        df_raw = df_raw.select(
-            [pl.col(c).cast(pl.Utf8) for c in df_raw.columns]
-        )
-
-        print(f"✓ Archivo leído: {df_raw.shape}")
-
-        columnas_tipadas = []
-        errores_detectados = []
-
-        # 2️⃣ Validación estructural completa
-        for col, tipo in self.schema.items():
-
-            col_cast = pl.col(col).cast(tipo, strict=False)
-
-            # Detectar si existe al menos un error en la columna
-            errores_col = (
-                df_raw
-                .with_columns(col_cast.alias("cast_temp"))
-                .filter(
-                    pl.col("cast_temp").is_null() &
-                    pl.col(col).is_not_null()
-                )
+        try:
+            # 🔴 Tipado fuerte desde la carga
+            self.df = pl.read_excel(
+                self.ruta_excel,
+                schema=self.schema  # ← cast fuerte aquí
             )
 
-            if errores_col.height > 0:
-                errores_detectados.append((col, str(tipo)))
+            print("✓ Archivo válido estructuralmente")
 
-            columnas_tipadas.append(col_cast.alias(col))
+        except Exception as e:
 
-        # 3️⃣ Si hay errores → FAIL FAST
-        if errores_detectados:
+            print("❌ Error estructural en la carga. Archivo rechazado.")
 
-            print("❌ Error estructural detectado. Archivo rechazado.")
-
-            ahora = datetime.now()
-
-            for col, tipo in errores_detectados:
-                self.conn.execute(
-                    "INSERT INTO errores_estructura VALUES (?, ?, ?)",
-                    (col, tipo, ahora)
-                )
+            self.conn.execute(
+                "INSERT INTO errores_estructura VALUES (?, ?)",
+                (str(e), datetime.now())
+            )
 
             return False
 
-        # 4️⃣ Si todo correcto → registrar en DuckDB
-        self.df = df_raw.select(columnas_tipadas)
-
+        # Si llegó aquí, cumple estructura
         self.conn.register("datos", self.df.to_arrow())
-        print("✓ Archivo válido. Registrado en DuckDB.")
+        print("✓ Registrado en DuckDB")
 
         return True
 
@@ -83,7 +50,9 @@ class ValidadorSLA:
         return self.conn.execute(query).pl()
 
     def ver_errores(self):
-        return self.conn.execute("SELECT * FROM errores_estructura").fetchdf()
+        return self.conn.execute(
+            "SELECT * FROM errores_estructura"
+        ).fetchdf()
 
     def cerrar(self):
         self.conn.close()
