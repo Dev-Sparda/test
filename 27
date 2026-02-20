@@ -1,0 +1,63 @@
+import polars as pl
+import duckdb
+
+
+class ValidadorDemo:
+
+    def __init__(self, ruta_excel, schema):
+        """
+        schema: dict
+            {
+                "id": pl.Int64,
+                "nombre": pl.Utf8,
+                "edad": pl.Int64,
+                "monto": pl.Float64
+            }
+        """
+        self.ruta_excel = ruta_excel
+        self.schema = schema
+        self.conn = duckdb.connect(":memory:")
+        self.df_validos = None
+        self.df_invalidos = None
+
+    def cargar_y_validar(self):
+
+        # Leer una sola vez
+        df_raw = pl.read_excel(self.ruta_excel)
+        df_raw = df_raw.select(
+            [pl.col(c).cast(pl.Utf8) for c in df_raw.columns]
+        )
+
+        print(f"✓ Archivo leído: {df_raw.shape}")
+
+        columnas_tipadas = []
+        condiciones_validas = []
+
+        for col, tipo in self.schema.items():
+
+            col_cast = pl.col(col).cast(tipo, strict=False)
+            columnas_tipadas.append(col_cast.alias(col))
+
+            condiciones_validas.append(
+                col_cast.is_not_null() | pl.col(col).is_null()
+            )
+
+        df_tipado = df_raw.select(columnas_tipadas)
+
+        condicion_final = pl.all_horizontal(condiciones_validas)
+
+        self.df_validos = df_tipado.filter(condicion_final)
+        self.df_invalidos = df_raw.filter(~condicion_final)
+
+        print(f"✓ Filas válidas: {self.df_validos.height}")
+        print(f"❌ Filas inválidas: {self.df_invalidos.height}")
+
+        if self.df_validos.height > 0:
+            self.conn.register("datos", self.df_validos.to_arrow())
+            print("✓ Datos válidos registrados en DuckDB")
+
+    def validar_negocio(self, query):
+        return self.conn.execute(query).pl()
+
+    def cerrar(self):
+        self.conn.close()
