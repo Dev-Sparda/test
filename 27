@@ -1,58 +1,66 @@
-import polars as pl
-import duckdb
-from datetime import datetime
+import pandas as pd
 
-
-class ValidadorSLA:
-
-    def __init__(self, ruta_excel, schema):
-        self.ruta_excel = ruta_excel
-        self.schema = schema
-        self.conn = duckdb.connect(":memory:")
-        self.df = None
-
-        self.conn.execute("""
-            CREATE TABLE errores_estructura (
-                error_mensaje VARCHAR,
-                fecha TIMESTAMP
-            )
-        """)
-
-    def cargar_y_validar(self):
-
-        try:
-            # 🔴 Tipado fuerte desde la carga
-            self.df = pl.read_excel(
-                self.ruta_excel,
-                schema=self.schema  # ← cast fuerte aquí
-            )
-
-            print("✓ Archivo válido estructuralmente")
-
-        except Exception as e:
-
-            print("❌ Error estructural en la carga. Archivo rechazado.")
-
-            self.conn.execute(
-                "INSERT INTO errores_estructura VALUES (?, ?)",
-                (str(e), datetime.now())
-            )
-
-            return False
-
-        # Si llegó aquí, cumple estructura
-        self.conn.register("datos", self.df.to_arrow())
-        print("✓ Registrado en DuckDB")
-
-        return True
-
-    def validar_negocio(self, query):
-        return self.conn.execute(query).pl()
-
-    def ver_errores(self):
-        return self.conn.execute(
-            "SELECT * FROM errores_estructura"
-        ).fetchdf()
-
-    def cerrar(self):
-        self.conn.close()
+def aplicar_cambios(df_base: pd.DataFrame, df_excel: pd.DataFrame) -> pd.DataFrame:
+    
+    KEYS = [
+        "NUMERO_DE_CONTRATO",
+        "EMISORA",
+        "EMISION_O_SERIE",
+        "CODIGO_DE_IDENTIFICACION",
+        "TIPO_DE_VALOR",
+        "TIPO_DE_INVERSION"
+    ]
+    
+    df_base = df_base.copy()
+    df_excel = df_excel.copy()
+    
+    # ---------------------------------------------------
+    # 1️⃣ ELIMINACIONES
+    # ---------------------------------------------------
+    
+    df_eliminar = df_excel[df_excel["ELIMINAR"].notna()]
+    
+    if not df_eliminar.empty:
+        df_base = df_base.merge(
+            df_eliminar[KEYS],
+            on=KEYS,
+            how="left",
+            indicator=True
+        )
+        
+        df_base = df_base[df_base["_merge"] == "left_only"]
+        df_base = df_base.drop(columns="_merge")
+    
+    
+    # ---------------------------------------------------
+    # 2️⃣ ACTUALIZACIONES
+    # ---------------------------------------------------
+    
+    # Identificar columnas _ACTUALIZAR
+    columnas_actualizar = [col for col in df_excel.columns if col.endswith("_ACTUALIZAR")]
+    
+    if columnas_actualizar:
+        
+        # Solo filas donde no se elimina
+        df_updates = df_excel[df_excel["ELIMINAR"].isna()].copy()
+        
+        # Merge para traer columnas actualizar
+        df_base = df_base.merge(
+            df_updates[KEYS + columnas_actualizar],
+            on=KEYS,
+            how="left"
+        )
+        
+        for col_update in columnas_actualizar:
+            
+            col_original = col_update.replace("_ACTUALIZAR", "")
+            
+            if col_original in df_base.columns:
+                
+                mask = df_base[col_update].notna()
+                
+                df_base.loc[mask, col_original] = df_base.loc[mask, col_update]
+                
+                df_base.drop(columns=col_update, inplace=True)
+    
+    return df_base
