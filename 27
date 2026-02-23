@@ -1,38 +1,15 @@
-Private Sub btnAplicarMasivo_Click()
+Private Sub chkSeleccion_Click()
 
-    Dim rs As DAO.Recordset
-    Dim i As Integer
+    If Me.chkSeleccion = True Then
+        
+        CurrentDb.Execute "INSERT INTO tblSeleccionTemporal (IDRegistro) " & _
+                          "VALUES (" & Me.ID & ")"
+                          
+    Else
     
-    ' Verificar que haya registros seleccionados
-    If Me.SelHeight = 0 Then
-        MsgBox "Selecciona primero los registros a actualizar.", vbExclamation
-        Exit Sub
+        CurrentDb.Execute "DELETE FROM tblSeleccionTemporal " & _
+                          "WHERE IDRegistro=" & Me.ID
+                          
     End If
-    
-    Set rs = Me.RecordsetClone
-    
-    ' Ir al primer registro seleccionado
-    rs.AbsolutePosition = Me.SelTop - 1
-    
-    For i = 1 To Me.SelHeight
-        
-        rs.Edit
-        
-        If Not IsNull(Me.txtDescripcionMasiva) Then
-            rs!DescripcionIncidencia = Me.txtDescripcionMasiva
-        End If
-        
-        If Not IsNull(Me.txtAccionMasiva) Then
-            rs!AccionASeguir = Me.txtAccionMasiva
-        End If
-        
-        rs.Update
-        rs.MoveNext
-        
-    Next i
-    
-    Me.Requery
-    
-    MsgBox "Registros actualizados correctamente.", vbInformation
 
 End Sub
