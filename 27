@@ -2,14 +2,18 @@ Private Sub chkSeleccion_Click()
 
     If Me.chkSeleccion = True Then
         
-        CurrentDb.Execute "INSERT INTO tblSeleccionTemporal (IDRegistro) " & _
-                          "VALUES (" & Me.ID & ")"
-                          
+        CurrentDb.Execute _
+        "INSERT INTO tblSeleccionTemporal (IDRegistro) " & _
+        "VALUES (" & Me!ID & ")"
+        
     Else
-    
-        CurrentDb.Execute "DELETE FROM tblSeleccionTemporal " & _
-                          "WHERE IDRegistro=" & Me.ID
-                          
+        
+        CurrentDb.Execute _
+        "DELETE FROM tblSeleccionTemporal " & _
+        "WHERE IDRegistro=" & Me!ID
+        
     End If
+
+    Me.Requery
 
 End Sub
