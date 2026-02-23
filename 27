@@ -1,19 +1,15 @@
 Private Sub chkSeleccion_Click()
-
+    Dim db As DAO.Database
+    Set db = CurrentDb
+    
     If Me.chkSeleccion = True Then
-        
-        CurrentDb.Execute _
-        "INSERT INTO tblSeleccionTemporal (IDRegistro) " & _
-        "VALUES (" & Me!ID & ")"
-        
+        db.Execute "INSERT INTO tblSeleccionTemporal (IDRegistro) VALUES (" & Me!ID & ")"
     Else
-        
-        CurrentDb.Execute _
-        "DELETE FROM tblSeleccionTemporal " & _
-        "WHERE IDRegistro=" & Me!ID
-        
+        db.Execute "DELETE FROM tblSeleccionTemporal WHERE IDRegistro=" & Me!ID
     End If
-
-    Me.Requery
-
+    
+    ' Recargar el checkbox sin que Access intente actualizar la consulta
+    Me.chkSeleccion = (DCount("*", "tblSeleccionTemporal", "IDRegistro=" & Me!ID) > 0)
+    
+    Set db = Nothing
 End Sub
