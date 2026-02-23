@@ -1,66 +1,38 @@
-import pandas as pd
+Private Sub btnAplicarMasivo_Click()
 
-def aplicar_cambios(df_base: pd.DataFrame, df_excel: pd.DataFrame) -> pd.DataFrame:
+    Dim rs As DAO.Recordset
+    Dim i As Integer
     
-    KEYS = [
-        "NUMERO_DE_CONTRATO",
-        "EMISORA",
-        "EMISION_O_SERIE",
-        "CODIGO_DE_IDENTIFICACION",
-        "TIPO_DE_VALOR",
-        "TIPO_DE_INVERSION"
-    ]
+    ' Verificar que haya registros seleccionados
+    If Me.SelHeight = 0 Then
+        MsgBox "Selecciona primero los registros a actualizar.", vbExclamation
+        Exit Sub
+    End If
     
-    df_base = df_base.copy()
-    df_excel = df_excel.copy()
+    Set rs = Me.RecordsetClone
     
-    # ---------------------------------------------------
-    # 1️⃣ ELIMINACIONES
-    # ---------------------------------------------------
+    ' Ir al primer registro seleccionado
+    rs.AbsolutePosition = Me.SelTop - 1
     
-    df_eliminar = df_excel[df_excel["ELIMINAR"].notna()]
-    
-    if not df_eliminar.empty:
-        df_base = df_base.merge(
-            df_eliminar[KEYS],
-            on=KEYS,
-            how="left",
-            indicator=True
-        )
+    For i = 1 To Me.SelHeight
         
-        df_base = df_base[df_base["_merge"] == "left_only"]
-        df_base = df_base.drop(columns="_merge")
-    
-    
-    # ---------------------------------------------------
-    # 2️⃣ ACTUALIZACIONES
-    # ---------------------------------------------------
-    
-    # Identificar columnas _ACTUALIZAR
-    columnas_actualizar = [col for col in df_excel.columns if col.endswith("_ACTUALIZAR")]
-    
-    if columnas_actualizar:
+        rs.Edit
         
-        # Solo filas donde no se elimina
-        df_updates = df_excel[df_excel["ELIMINAR"].isna()].copy()
+        If Not IsNull(Me.txtDescripcionMasiva) Then
+            rs!DescripcionIncidencia = Me.txtDescripcionMasiva
+        End If
         
-        # Merge para traer columnas actualizar
-        df_base = df_base.merge(
-            df_updates[KEYS + columnas_actualizar],
-            on=KEYS,
-            how="left"
-        )
+        If Not IsNull(Me.txtAccionMasiva) Then
+            rs!AccionASeguir = Me.txtAccionMasiva
+        End If
         
-        for col_update in columnas_actualizar:
-            
-            col_original = col_update.replace("_ACTUALIZAR", "")
-            
-            if col_original in df_base.columns:
-                
-                mask = df_base[col_update].notna()
-                
-                df_base.loc[mask, col_original] = df_base.loc[mask, col_update]
-                
-                df_base.drop(columns=col_update, inplace=True)
+        rs.Update
+        rs.MoveNext
+        
+    Next i
     
-    return df_base
+    Me.Requery
+    
+    MsgBox "Registros actualizados correctamente.", vbInformation
+
+End Sub
