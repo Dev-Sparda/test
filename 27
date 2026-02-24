@@ -1,15 +1,16 @@
-Private Sub chkSeleccion_Click()
-    Dim db As DAO.Database
-    Set db = CurrentDb
+Private Sub btnExportarAExcel_Click()
+
+    Dim ruta As String
     
-    If Me.chkSeleccion = True Then
-        db.Execute "INSERT INTO tblSeleccionTemporal (IDRegistro) VALUES (" & Me!ID & ")"
-    Else
-        db.Execute "DELETE FROM tblSeleccionTemporal WHERE IDRegistro=" & Me!ID
-    End If
+    ruta = CurrentProject.Path & "\Incidencias_Editar.xlsx"
     
-    ' Recargar el checkbox sin que Access intente actualizar la consulta
-    Me.chkSeleccion = (DCount("*", "tblSeleccionTemporal", "IDRegistro=" & Me!ID) > 0)
-    
-    Set db = Nothing
+    DoCmd.TransferSpreadsheet _
+        TransferType:=acExport, _
+        SpreadsheetType:=acSpreadsheetTypeExcel12Xml, _
+        TableName:="qryExportarIncidencias", _
+        FileName:=ruta, _
+        HasFieldNames:=True
+        
+    MsgBox "Archivo exportado correctamente en: " & ruta, vbInformation
+
 End Sub
