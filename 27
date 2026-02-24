@@ -1,16 +1,31 @@
-Private Sub btnExportarAExcel_Click()
+Sub EnviarCambiosAAccess()
 
-    Dim ruta As String
+    Dim conn As Object
+    Dim rs As Object
+    Dim rutaBD As String
+    Dim ultimaFila As Long
+    Dim i As Long
     
-    ruta = CurrentProject.Path & "\Incidencias_Editar.xlsx"
+    ' Ruta a tu base de Access
+    rutaBD = ThisWorkbook.Path & "\TuBaseDeDatos.accdb"
     
-    DoCmd.TransferSpreadsheet _
-        TransferType:=acExport, _
-        SpreadsheetType:=acSpreadsheetTypeExcel12Xml, _
-        TableName:="qryExportarIncidencias", _
-        FileName:=ruta, _
-        HasFieldNames:=True
-        
-    MsgBox "Archivo exportado correctamente en: " & ruta, vbInformation
+    Set conn = CreateObject("ADODB.Connection")
+    conn.Open "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" & rutaBD
+    
+    ultimaFila = Cells(Rows.Count, 1).End(xlUp).Row
+    
+    For i = 2 To ultimaFila
+    
+        conn.Execute "UPDATE TBL_INCIDENCIAS_ROBOT " & _
+                     "SET [Descripción de incidencia] = '" & Replace(Cells(i, 3).Value, "'", "''") & "', " & _
+                     "[Acción a seguir] = '" & Replace(Cells(i, 4).Value, "'", "''") & "' " & _
+                     "WHERE ID = " & Cells(i, 1).Value
+                     
+    Next i
+    
+    MsgBox "Datos actualizados correctamente en Access.", vbInformation
+    
+    conn.Close
+    Set conn = Nothing
 
 End Sub
