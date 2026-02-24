@@ -1,57 +1,69 @@
-import requests
-import pandas as pd
-from datetime import datetime
+Private Sub btnGenerarExcel_Click()
 
-def descargar_tipo_cambio_directo(token, serie="SF43718", fecha_inicio=None, fecha_fin=None):
-    """
-    Descarga tipo de cambio usando requests directamente
-    """
+    Dim fso As Object
+    Dim rutaPlantilla As String
+    Dim rutaSalida As String
+    Dim xlApp As Object
+    Dim wb As Object
+    Dim ws As Object
     
-    # Construir URL base
-    base_url = "https://www.banxico.org.mx/SieAPIRest/service/v1"
+    rutaPlantilla = CurrentProject.Path & "\Plantilla_Incidencias.xlsm"
+    rutaSalida = CurrentProject.Path & "\Salida\Incidencias_Editar.xlsm"
     
-    if fecha_inicio and fecha_fin:
-        # Consulta por rango de fechas
-        url = f"{base_url}/series/{serie}/datos/{fecha_inicio}/{fecha_fin}"
-    else:
-        # Consulta completa
-        url = f"{base_url}/series/{serie}/datos"
+    Set fso = CreateObject("Scripting.FileSystemObject")
     
-    headers = {
-        "Bmx-Token": token,
-        "Accept": "application/json"  # También soporta XML [citation:2]
-    }
+    ' 🔴 Si existe archivo anterior, eliminarlo
+    If fso.FileExists(rutaSalida) Then
+        fso.DeleteFile rutaSalida, True
+    End If
     
-    print(f"🌐 Consultando: {url}")
+    ' Copiar plantilla limpia
+    fso.CopyFile rutaPlantilla, rutaSalida
     
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
+    ' Abrir Excel
+    Set xlApp = CreateObject("Excel.Application")
+    xlApp.Visible = False
+    
+    Set wb = xlApp.Workbooks.Open(rutaSalida)
+    Set ws = wb.Sheets(1)
+    
+    ' Limpiar datos por seguridad
+    ws.Rows("2:" & ws.Rows.Count).ClearContents
+    
+    ' Insertar datos desde consulta
+    Dim rs As DAO.Recordset
+    Dim fila As Long
+    
+    Set rs = CurrentDb.OpenRecordset("qryExportarIncidencias")
+    fila = 2
+    
+    Do While Not rs.EOF
         
-        data = response.json()
+        ws.Cells(fila, 1).Value = rs!ID
+        ws.Cells(fila, 2).Value = rs!Title
+        ws.Cells(fila, 3).Value = rs![Descripción de incidencia]
+        ws.Cells(fila, 4).Value = rs![Acción a seguir]
         
-        # Procesar respuesta
-        series_data = data['bmx']['series'][0]
-        datos = series_data['datos']
+        fila = fila + 1
+        rs.MoveNext
         
-        # Convertir a DataFrame
-        df = pd.DataFrame(datos)
-        df['fecha'] = pd.to_datetime(df['fecha'], format='%d/%m/%Y')
-        df['dato'] = pd.to_numeric(df['dato'])
-        df = df.sort_values('fecha')
-        
-        print(f"✅ {len(df)} registros obtenidos")
-        return df
-        
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Error en la petición: {e}")
-        return None
-    except KeyError as e:
-        print(f"❌ Error procesando respuesta JSON: {e}")
-        return None
+    Loop
+    
+    rs.Close
+    Set rs = Nothing
+    
+    wb.Save
+    wb.Close
+    xlApp.Quit
+    
+    Set wb = Nothing
+    Set xlApp = Nothing
+    
+    MsgBox "Archivo listo para edición.", vbInformation
+    
+    ' Abrir el archivo al usuario
+    Application.FollowHyperlink rutaSalida
 
-# Uso
-TOKEN = "tu_token_aqui"
-df = descargar_tipo_cambio_directo(TOKEN, fecha_inicio="2024-01-01", fecha_fin="2024-12-31")
+End Sub
 if df is not None:
     print(df.head())
