@@ -1,31 +1,57 @@
-Sub EnviarCambiosAAccess()
+import requests
+import pandas as pd
+from datetime import datetime
 
-    Dim conn As Object
-    Dim rs As Object
-    Dim rutaBD As String
-    Dim ultimaFila As Long
-    Dim i As Long
+def descargar_tipo_cambio_directo(token, serie="SF43718", fecha_inicio=None, fecha_fin=None):
+    """
+    Descarga tipo de cambio usando requests directamente
+    """
     
-    ' Ruta a tu base de Access
-    rutaBD = ThisWorkbook.Path & "\TuBaseDeDatos.accdb"
+    # Construir URL base
+    base_url = "https://www.banxico.org.mx/SieAPIRest/service/v1"
     
-    Set conn = CreateObject("ADODB.Connection")
-    conn.Open "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" & rutaBD
+    if fecha_inicio and fecha_fin:
+        # Consulta por rango de fechas
+        url = f"{base_url}/series/{serie}/datos/{fecha_inicio}/{fecha_fin}"
+    else:
+        # Consulta completa
+        url = f"{base_url}/series/{serie}/datos"
     
-    ultimaFila = Cells(Rows.Count, 1).End(xlUp).Row
+    headers = {
+        "Bmx-Token": token,
+        "Accept": "application/json"  # También soporta XML [citation:2]
+    }
     
-    For i = 2 To ultimaFila
+    print(f"🌐 Consultando: {url}")
     
-        conn.Execute "UPDATE TBL_INCIDENCIAS_ROBOT " & _
-                     "SET [Descripción de incidencia] = '" & Replace(Cells(i, 3).Value, "'", "''") & "', " & _
-                     "[Acción a seguir] = '" & Replace(Cells(i, 4).Value, "'", "''") & "' " & _
-                     "WHERE ID = " & Cells(i, 1).Value
-                     
-    Next i
-    
-    MsgBox "Datos actualizados correctamente en Access.", vbInformation
-    
-    conn.Close
-    Set conn = Nothing
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        # Procesar respuesta
+        series_data = data['bmx']['series'][0]
+        datos = series_data['datos']
+        
+        # Convertir a DataFrame
+        df = pd.DataFrame(datos)
+        df['fecha'] = pd.to_datetime(df['fecha'], format='%d/%m/%Y')
+        df['dato'] = pd.to_numeric(df['dato'])
+        df = df.sort_values('fecha')
+        
+        print(f"✅ {len(df)} registros obtenidos")
+        return df
+        
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Error en la petición: {e}")
+        return None
+    except KeyError as e:
+        print(f"❌ Error procesando respuesta JSON: {e}")
+        return None
 
-End Sub
+# Uso
+TOKEN = "tu_token_aqui"
+df = descargar_tipo_cambio_directo(TOKEN, fecha_inicio="2024-01-01", fecha_fin="2024-12-31")
+if df is not None:
+    print(df.head())
