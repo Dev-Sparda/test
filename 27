@@ -1,69 +1,50 @@
-Private Sub btnGenerarExcel_Click()
+Option Explicit
 
-    Dim fso As Object
-    Dim rutaPlantilla As String
-    Dim rutaSalida As String
-    Dim xlApp As Object
-    Dim wb As Object
-    Dim ws As Object
+Sub EnviarCambiosAAccess()
+
+    Dim conn As Object
+    Dim rutaBD As String
+    Dim ultimaFila As Long
+    Dim i As Long
+    Dim sql As String
     
-    rutaPlantilla = CurrentProject.Path & "\Plantilla_Incidencias.xlsm"
-    rutaSalida = CurrentProject.Path & "\Salida\Incidencias_Editar.xlsm"
-    
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    
-    ' 🔴 Si existe archivo anterior, eliminarlo
-    If fso.FileExists(rutaSalida) Then
-        fso.DeleteFile rutaSalida, True
+    ' Confirmación de seguridad
+    If MsgBox("¿Deseas enviar los cambios a SharePoint?", _
+              vbYesNo + vbQuestion, _
+              "Confirmar envío") = vbNo Then
+        Exit Sub
     End If
     
-    ' Copiar plantilla limpia
-    fso.CopyFile rutaPlantilla, rutaSalida
+    ' Ruta automática a la base (misma carpeta superior)
+    rutaBD = ThisWorkbook.Path & "\..\Base.accdb"
     
-    ' Abrir Excel
-    Set xlApp = CreateObject("Excel.Application")
-    xlApp.Visible = False
+    Set conn = CreateObject("ADODB.Connection")
+    conn.Open "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" & rutaBD
     
-    Set wb = xlApp.Workbooks.Open(rutaSalida)
-    Set ws = wb.Sheets(1)
+    ultimaFila = Cells(Rows.Count, 1).End(xlUp).Row
     
-    ' Limpiar datos por seguridad
-    ws.Rows("2:" & ws.Rows.Count).ClearContents
+    For i = 2 To ultimaFila
     
-    ' Insertar datos desde consulta
-    Dim rs As DAO.Recordset
-    Dim fila As Long
-    
-    Set rs = CurrentDb.OpenRecordset("qryExportarIncidencias")
-    fila = 2
-    
-    Do While Not rs.EOF
+        ' Solo actualizar si hay algo escrito en I, J o K
+        If Cells(i, 9).Value <> "" _
+        Or Cells(i, 10).Value <> "" _
+        Or Cells(i, 11).Value <> "" Then
         
-        ws.Cells(fila, 1).Value = rs!ID
-        ws.Cells(fila, 2).Value = rs!Title
-        ws.Cells(fila, 3).Value = rs![Descripción de incidencia]
-        ws.Cells(fila, 4).Value = rs![Acción a seguir]
+            sql = "UPDATE TBL_INCIDENCIAS_ROBOT SET " & _
+                  "[Comentario1] = '" & Replace(Cells(i, 9).Value, "'", "''") & "', " & _
+                  "[Comentario2] = '" & Replace(Cells(i, 10).Value, "'", "''") & "', " & _
+                  "[Comentario3] = '" & Replace(Cells(i, 11).Value, "'", "''") & "' " & _
+                  "WHERE ID = " & Cells(i, 1).Value
+                  
+            conn.Execute sql
+            
+        End If
         
-        fila = fila + 1
-        rs.MoveNext
-        
-    Loop
+    Next i
     
-    rs.Close
-    Set rs = Nothing
+    conn.Close
+    Set conn = Nothing
     
-    wb.Save
-    wb.Close
-    xlApp.Quit
-    
-    Set wb = Nothing
-    Set xlApp = Nothing
-    
-    MsgBox "Archivo listo para edición.", vbInformation
-    
-    ' Abrir el archivo al usuario
-    Application.FollowHyperlink rutaSalida
+    MsgBox "Datos actualizados correctamente.", vbInformation
 
 End Sub
-if df is not None:
-    print(df.head())
