@@ -160,3 +160,42 @@ if __name__ == "__main__":
             json.dump(resultado, f, indent=4, default=str)
 
         print("\n📝 Log generado: log_mock.json")
+
+
+
+
+
+
+
+
+def _validar_reglas_sql(self):
+
+    carpeta = Path("Reglas") / str(self.config["id_insumo"])
+
+    if not carpeta.exists():
+        print("⚠ No existen reglas para este insumo")
+        return
+
+    for archivo_sql in carpeta.glob("*.sql"):
+
+        print(f"🔎 Ejecutando regla: {archivo_sql.name}")
+
+        with open(archivo_sql, "r", encoding="utf-8") as f:
+            query = f.read()
+
+        resultado = self.conn.execute(query).pl()
+
+        # CONTRATO:
+        # NULL -> OK
+        # Filas -> Error
+
+        if resultado.height == 1 and resultado.row(0)[0] is None:
+            print("✓ Regla OK")
+            continue
+
+        if resultado.height > 0:
+            print("⚠ Errores detectados")
+            self.resultado["errores_negocio"].append({
+                "regla": archivo_sql.name,
+                "detalle": resultado.to_dicts()
+            })
