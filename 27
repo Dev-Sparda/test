@@ -1,125 +1,162 @@
-import polars as pl
 import duckdb
-import os
-import subprocess
+import polars as pl
+import json
 from datetime import datetime
+from pathlib import Path
 
 
-class ValidadorSLA:
+# ==========================================================
+# MOCK CONFIGURACIÓN HARDCODEADA
+# ==========================================================
 
-    def __init__(self, ruta_excel, config):
-        self.ruta_excel = ruta_excel
+CONFIG_INSUMO = {
+    "id_insumo": 1,
+    "ruta_archivo": "insumo_mock.txt",  # <-- Hardcodeado
+    "schema": {
+        "LD_ID_GLOBAL": pl.Int64,
+        "LD_IND01_ACT_EMP": pl.Utf8,
+        "LD_TIPO_PERSONA": pl.Utf8,
+        "LD_CON_PERSONA": pl.Utf8,
+        "LD_FEC_REGISTRO": pl.Date
+    },
+    "cantidad_columnas": 5
+}
+
+
+# ==========================================================
+# VALIDADOR MOCK
+# ==========================================================
+
+class ValidadorMock:
+
+    def __init__(self, config):
+
         self.config = config
         self.conn = None
         self.df = None
 
-    # 🔹 Se ejecuta al entrar en el with
+        self.resultado = {
+            "id_insumo": config["id_insumo"],
+            "archivo": config["ruta_archivo"],
+            "fecha_proceso": datetime.now(),
+            "estructura_ok": False,
+            "errores_estructura": [],
+            "errores_negocio": []
+        }
+
     def __enter__(self):
         self.conn = duckdb.connect(":memory:")
-        self.conn.execute("""
-            CREATE TABLE errores_estructura (
-                archivo VARCHAR,
-                error_mensaje VARCHAR,
-                fecha TIMESTAMP
-            )
-        """)
         return self
 
-    # 🔹 Se ejecuta al salir del with (aunque haya error)
     def __exit__(self, exc_type, exc_value, traceback):
-        self.liberar_archivo_onedrive()
         if self.conn:
             self.conn.close()
-        print("🔒 Recursos liberados correctamente")
 
-    def cargar_y_validar(self):
+    # ======================================================
+    # PROCESO COMPLETO
+    # ======================================================
+
+    def procesar(self):
+
+        if not self._validar_estructura():
+            return self.resultado
+
+        self._validar_regla_mock()
+
+        return self.resultado
+
+    # ======================================================
+    # VALIDACIÓN ESTRUCTURA
+    # ======================================================
+
+    def _validar_estructura(self):
 
         try:
-            # Validación cantidad columnas
-            df_temp = pl.read_excel(self.ruta_excel, infer_schema_length=10)
+            # 🔹 Lectura inicial para validar columnas
+            df_temp = pl.read_csv(
+                self.config["ruta_archivo"],
+                separator="\t",
+                infer_schema_length=10
+            )
 
             if df_temp.width != self.config["cantidad_columnas"]:
                 raise ValueError(
-                    f"Columnas esperadas: {self.config['cantidad_columnas']} - "
-                    f"Recibidas: {df_temp.width}"
+                    f"Columnas esperadas {self.config['cantidad_columnas']} "
+                    f"- Recibidas {df_temp.width}"
                 )
 
-            # Tipado fuerte
-            self.df = pl.read_excel(
-                self.ruta_excel,
-                schema=self.config["schema"]
+            # 🔹 Lectura con tipado fuerte
+            self.df = pl.read_csv(
+                self.config["ruta_archivo"],
+                separator="\t",
+                schema=self.config["schema"],
+                try_parse_dates=True
             )
 
-            print("✓ Archivo válido estructuralmente")
+            # 🔹 Forzar formato de fecha específico
+            self.df = self.df.with_columns(
+                pl.col("LD_FEC_REGISTRO")
+                .str.strptime(pl.Date, "%Y-%m-%d", strict=True)
+            )
+
+            # 🔹 Registrar en DuckDB
+            self.conn.register("datos", self.df.to_arrow())
+
+            self.resultado["estructura_ok"] = True
+            print("✓ Estructura válida")
+            return True
 
         except Exception as e:
-            print("❌ Error estructural")
-
-            self.conn.execute(
-                "INSERT INTO errores_estructura VALUES (?, ?, ?)",
-                (self.ruta_excel, str(e), datetime.now())
-            )
-
+            self.resultado["errores_estructura"].append(str(e))
+            print("❌ Error estructural:", e)
             return False
 
-        # Registrar zero-copy
-        self.conn.register("datos", self.df.to_arrow())
-        print("✓ Registrado en DuckDB (zero-copy)")
+    # ======================================================
+    # VALIDACIÓN DE NEGOCIO MOCK
+    # ======================================================
 
-        return True
+    def _validar_regla_mock(self):
 
-    def validar_negocio(self, query):
-        return self.conn.execute(query).pl()
+        # Regla ejemplo:
+        # Si LD_ID_GLOBAL es NULL o negativo → error
 
-    def ver_errores(self):
-        return self.conn.execute(
-            "SELECT * FROM errores_estructura"
-        ).fetchdf()
+        query = """
+        SELECT 
+            LD_ID_GLOBAL,
+            'ID inválido' AS error
+        FROM datos
+        WHERE LD_ID_GLOBAL IS NULL
+           OR LD_ID_GLOBAL < 0
+        """
 
-    def liberar_archivo_onedrive(self):
+        resultado = self.conn.execute(query).pl()
 
-        if not os.path.exists(self.ruta_excel):
-            print("⚠️ Archivo no existe físicamente")
-            return
+        # Contrato:
+        # NULL -> OK
+        # Filas -> Error
 
-        try:
-            result = subprocess.run(
-                f'attrib +U -P "{self.ruta_excel}"',
-                shell=True,
-                capture_output=True,
-                text=True
-            )
-
-            if result.returncode == 0:
-                print("☁️ Archivo liberado (modo nube)")
-            else:
-                print("⚠️ No se pudo liberar archivo:", result.stderr)
-
-        except Exception as e:
-            print("⚠️ Error liberando archivo:", e)
+        if resultado.height > 0:
+            self.resultado["errores_negocio"].append({
+                "regla": "id_global_no_valido",
+                "detalle": resultado.to_dicts()
+            })
+            print("⚠ Errores de negocio detectados")
+        else:
+            print("✓ Validación de negocio OK")
 
 
+# ==========================================================
+# EJECUCIÓN
+# ==========================================================
 
--------uso---
-config_mock = {
-    "cantidad_columnas": 3,
-    "schema": {
-        "id": pl.Int64,
-        "nombre": pl.Utf8,
-        "fecha": pl.Date
-    }
-}
+if __name__ == "__main__":
 
-ruta = "insumo_demo.xlsx"
+    with ValidadorMock(CONFIG_INSUMO) as val:
 
-with ValidadorSLA(ruta, config_mock) as validador:
+        resultado = val.procesar()
 
-    if validador.cargar_y_validar():
+        # 🔹 Generar log JSON
+        with open("log_mock.json", "w", encoding="utf-8") as f:
+            json.dump(resultado, f, indent=4, default=str)
 
-        resultado = validador.validar_negocio(
-            "SELECT COUNT(*) as total FROM datos"
-        )
-        print(resultado)
-
-    else:
-        print("⛔ SLA incumplido")
+        print("\n📝 Log generado: log_mock.json")
