@@ -1,0 +1,86 @@
+import os
+import sqlite3
+import tempfile
+import traceback
+from pathlib import Path
+
+# 👇 CAMBIA ESTA RUTA POR LA MISMA QUE USA TU EXE
+DB_PATH = r"C:\RUTA\A\TU\BASE\basedatos.db"
+
+def print_section(title):
+    print("\n" + "="*60)
+    print(title)
+    print("="*60)
+
+def test_file_exists():
+    print_section("1️⃣ Verificando existencia del archivo")
+    print("Ruta:", DB_PATH)
+    print("Existe:", os.path.exists(DB_PATH))
+    print("Es archivo:", os.path.isfile(DB_PATH))
+
+def test_os_access():
+    print_section("2️⃣ Probando permisos con os.access")
+    print("Lectura:", os.access(DB_PATH, os.R_OK))
+    print("Escritura:", os.access(DB_PATH, os.W_OK))
+    print("Ejecución:", os.access(DB_PATH, os.X_OK))
+
+def test_directory_permissions():
+    print_section("3️⃣ Probando permisos en el directorio")
+    directory = Path(DB_PATH).parent
+    print("Directorio:", directory)
+    print("Existe:", directory.exists())
+    print("Lectura:", os.access(directory, os.R_OK))
+    print("Escritura:", os.access(directory, os.W_OK))
+
+def test_temp_write():
+    print_section("4️⃣ Probando escritura en carpeta TEMP")
+    try:
+        with tempfile.NamedTemporaryFile(delete=True) as tmp:
+            tmp.write(b"test")
+            tmp.flush()
+        print("✅ Escritura en TEMP correcta")
+    except Exception as e:
+        print("❌ Error en TEMP:", e)
+
+def test_sqlite_connection():
+    print_section("5️⃣ Probando conexión SQLite")
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        print("✅ Conexión exitosa")
+        conn.close()
+    except Exception as e:
+        print("❌ Error al conectar:")
+        traceback.print_exc()
+
+def test_sqlite_write():
+    print_section("6️⃣ Probando escritura SQLite")
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("CREATE TABLE IF NOT EXISTS test_permiso (id INTEGER)")
+        conn.commit()
+        print("✅ Escritura exitosa")
+        conn.close()
+    except Exception as e:
+        print("❌ Error al escribir:")
+        traceback.print_exc()
+
+def test_journal_creation():
+    print_section("7️⃣ Probando creación de archivo -journal")
+    journal_path = DB_PATH + "-journal"
+    try:
+        with open(journal_path, "w") as f:
+            f.write("test")
+        os.remove(journal_path)
+        print("✅ Puede crear archivo -journal")
+    except Exception as e:
+        print("❌ No puede crear archivo -journal:", e)
+
+if __name__ == "__main__":
+    test_file_exists()
+    test_os_access()
+    test_directory_permissions()
+    test_temp_write()
+    test_sqlite_connection()
+    test_sqlite_write()
+    test_journal_creation()
