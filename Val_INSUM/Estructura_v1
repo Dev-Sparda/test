@@ -17,3 +17,13 @@ logs/
             rango_1/
                 regla_101.parquet
                 regla_102.parquet
+
+
+
+Orquestador
+    ↓
+Factory (lee configuración)
+    ↓
+Instancia validadores dinámicamente
+    ↓
+Ejecuta todos los que estén activos
