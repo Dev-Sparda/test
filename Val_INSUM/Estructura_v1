@@ -6,3 +6,14 @@ proyecto/
  │     orquestador.py
  ├── logs/
  └── main.py
+
+
+
+# Salida logs
+logs/
+ └── insumo_1_20260303_1800/
+        log.json
+        parte_1/
+            rango_1/
+                regla_101.parquet
+                regla_102.parquet
