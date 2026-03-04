@@ -1,0 +1,8 @@
+proyecto/
+ ├── motor/
+ │     config_repository.py
+ │     file_loader_factory.py
+ │     validador_sla.py
+ │     orquestador.py
+ ├── logs/
+ └── main.py
