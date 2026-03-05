@@ -7,40 +7,28 @@ from typing import List, Dict, Optional, Tuple
 class RepositorioConfiguracion:
     """
     Clase que maneja el acceso a la base de datos de configuración
-    Usa context manager (__enter__/__exit__) para manejar la conexión automáticamente
     """
     
     def __init__(self, ruta_db: str):
-        """
-        Constructor: guarda la ruta de la base de datos
-        """
         self.ruta_db = ruta_db
-        self.conn = None  # Conexión, inicialmente None
+        self.conn = None
     
     def __enter__(self):
-        """
-        Se ejecuta al entrar al bloque 'with'
-        Abre la conexión a la base de datos
-        """
         self.conn = duckdb.connect(self.ruta_db)
-        return self  # Retorna el mismo objeto para usarlo dentro del with
+        return self
     
     def __exit__(self, exc_type, exc_value, traceback):
-        """
-        Se ejecuta al salir del bloque 'with'
-        Cierra la conexión automáticamente
-        """
         if self.conn:
             self.conn.close()
     
     # ================================
-    # INSUMO - Datos básicos del archivo
+    # INSUMO
     # ================================
     
     def obtener_insumo(self, id_insumo: int) -> Optional[Tuple]:
         """
         Obtiene los datos básicos del insumo
-        Returns: (ID_INSUMO, RUTA_ARCHIVO, TIPO_ARCHIVO) o None si no existe
+        Returns: (ID_INSUMO, RUTA_ARCHIVO, TIPO_ARCHIVO)
         """
         resultado = self.conn.execute("""
             SELECT ID_INSUMO, RUTA_ARCHIVO, TIPO_ARCHIVO
@@ -51,29 +39,29 @@ class RepositorioConfiguracion:
         return resultado
     
     # ================================
-    # PARTES - Cada parte puede ser una hoja de Excel o una sección del archivo
+    # PARTES
     # ================================
     
     def obtener_partes(self, id_insumo: int) -> List[Tuple]:
         """
-        Obtiene todas las partes ACTIVAS de un insumo
+        Obtiene todas las partes activas
         Returns: Lista de (ID_PARTE, NUM_PARTE, NOMBRE_PARTE)
         """
         return self.conn.execute("""
             SELECT ID_PARTE, NUM_PARTE, NOMBRE_PARTE
             FROM INSUMOS_PARTES
             WHERE ID_INSUMO = ?
-              AND ESTATUS = TRUE  -- Solo partes activas
+              AND ESTATUS = TRUE
             ORDER BY NUM_PARTE
         """, (id_insumo,)).fetchall()
     
     # ================================
-    # RANGOS - Definición de columnas por rango
+    # RANGOS
     # ================================
     
     def obtener_rangos(self, id_parte: int) -> List[Tuple]:
         """
-        Obtiene todos los rangos ACTIVOS de una parte
+        Obtiene todos los rangos activos de una parte
         Returns: Lista de (ID_RANGO, NUM_RANGO, NOMBRE_RANGO, COL_INICIO, COL_FIN)
         """
         return self.conn.execute("""
@@ -86,12 +74,12 @@ class RepositorioConfiguracion:
         """, (id_parte,)).fetchall()
     
     # ================================
-    # DEFINICIÓN DE COLUMNAS - Esquema de cada rango
+    # DEFINICIÓN COLUMNAS
     # ================================
     
     def obtener_definicion_columnas(self, id_rango: int) -> Dict[str, pl.DataType]:
         """
-        Obtiene la definición de columnas para un rango específico
+        Obtiene la definición de columnas para un rango
         Returns: Diccionario {nombre_columna: tipo_dato_polars}
         """
         columnas = self.conn.execute("""
@@ -102,45 +90,42 @@ class RepositorioConfiguracion:
             ORDER BY INDEX_COL
         """, (id_rango,)).fetchall()
         
-        # Mapeo de tipos de texto a tipos de Polars
+        # Mapeo de tipos
         mapeo = {
             "INT": pl.Int64,
             "STRING": pl.Utf8,
-            "DATE": pl.Utf8,   # Se puede convertir luego si quieres formato fecha real
+            "DATE": pl.Utf8,
             "FLOAT": pl.Float64
         }
         
-        # Construir diccionario de esquema
         esquema = {}
         for _, nombre, tipo in columnas:
-            esquema[nombre] = mapeo.get(tipo, pl.Utf8)  # Por defecto Utf8 si no se reconoce
+            esquema[nombre] = mapeo.get(tipo, pl.Utf8)
         
         return esquema
     
     # ================================
-    # VALIDACIONES - AHORA CON TIPO_VAL
+    # VALIDACIONES
     # ================================
     
     def obtener_validaciones(self, id_insumo: int) -> List[Dict]:
         """
-        Obtiene TODAS las validaciones activas de un insumo
-        Returns: Lista de diccionarios con datos de validación
+        Obtiene todas las validaciones activas
         """
         resultados = self.conn.execute("""
             SELECT ID_VAL,
-                   TIPO_VAL,        -- NUEVO: 'SLA', 'CRUCE', 'CALIDAD', etc.
-                   VALIDACION,       -- Query SQL o configuración
+                   TIPO_VAL,
+                   VALIDACION,
                    DESCRIPCION,
                    GRUPO,
                    SECCION,
                    BANDERA,
-                   CONFIG_JSON       -- NUEVO: Para configuraciones complejas (JSON)
+                   CONFIG_JSON
             FROM MOTOR_VAL
             WHERE ID_INSUMO = ?
               AND ESTATUS = TRUE
         """, (id_insumo,)).fetchall()
         
-        # Convertir a lista de diccionarios para más claridad
         validaciones = []
         for row in resultados:
             validaciones.append({
@@ -159,11 +144,9 @@ class RepositorioConfiguracion:
     def obtener_validaciones_por_tipo(self, id_insumo: int) -> Dict[str, List[Dict]]:
         """
         Obtiene validaciones agrupadas por tipo
-        Returns: Diccionario { 'SLA': [...], 'CRUCE': [...], ... }
         """
         todas = self.obtener_validaciones(id_insumo)
         
-        # Agrupar por tipo
         por_tipo = {}
         for val in todas:
             tipo = val["tipo_val"]
