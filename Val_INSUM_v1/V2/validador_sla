@@ -1,0 +1,158 @@
+# validador_sla.py
+import duckdb
+import polars as pl
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+
+from interfaces import Validador, ResultadoValidacion
+
+
+class ValidadorSLA(Validador):
+    """
+    Validador para reglas tipo SLA (Service Level Agreement)
+    Ejecuta queries SQL contra los datos del rango
+    """
+    
+    def __init__(self,
+                 id_insumo: int,
+                 id_parte: int,
+                 id_rango: int,
+                 df: pl.DataFrame,           # Datos del rango a validar
+                 reglas: List[Dict],          # Lista de reglas de este tipo
+                 base_log_path: Path,         # Ruta base para guardar errores
+                 metadata: Optional[Dict] = None):  # Metadatos adicionales
+        
+        # Guardar todos los parámetros como atributos de instancia
+        self.id_insumo = id_insumo
+        self.id_parte = id_parte
+        self.id_rango = id_rango
+        self.df = df
+        self.reglas = reglas                  # Ahora son diccionarios, no tuplas
+        self.base_log_path = base_log_path
+        self.metadata = metadata or {}
+        
+        # Atributos que se inicializan después
+        self.conn = None                       # Conexión a DuckDB
+        self.resultado = None                   # Objeto ResultadoValidacion
+    
+    @property
+    def tipo_validador(self) -> str:
+        """Propiedad que identifica el tipo de validador"""
+        return "SLA"
+    
+    def __enter__(self):
+        """
+        Al entrar al bloque 'with':
+        1. Crear conexión DuckDB en memoria
+        2. Registrar el DataFrame como tabla 'datos'
+        3. Crear objeto resultado
+        """
+        # Conexión en memoria (no guarda nada en disco)
+        self.conn = duckdb.connect(":memory:")
+        
+        # Registrar DataFrame como tabla 'datos' en DuckDB
+        # to_arrow() convierte Polars a Arrow (formato que entiende DuckDB)
+        self.conn.register("datos", self.df.to_arrow())
+        
+        # Crear objeto para almacenar resultados
+        self.resultado = ResultadoValidacion(
+            id_insumo=self.id_insumo,
+            id_parte=self.id_parte,
+            id_rango=self.id_rango,
+            tipo_validacion=self.tipo_validador,
+            metadata=self.metadata
+        )
+        
+        return self  # Importante: retornar self para usar en el bloque with
+    
+    def __exit__(self, exc_type, exc_value, traceback):
+        """
+        Al salir del bloque 'with':
+        Cerrar conexión a DuckDB
+        """
+        if self.conn:
+            self.conn.close()
+    
+    def validar(self) -> Dict[str, Any]:
+        """
+        Ejecuta todas las reglas SLA configuradas
+        """
+        # Iterar sobre cada regla
+        for regla in self.reglas:
+            # Extraer datos de la regla (ahora es diccionario)
+            id_val = regla["id_val"]
+            query = regla["validacion"]        # El query SQL
+            descripcion = regla["descripcion"]
+            grupo = regla.get("grupo", "")      # .get por si no existe
+            seccion = regla.get("seccion", "")
+            bandera = regla.get("bandera", "")
+            
+            try:
+                # Ejecutar query contra la tabla 'datos'
+                # El query debe ser algo como: SELECT * FROM datos WHERE condicion
+                resultado = self.conn.execute(query).pl()
+                total_errores = resultado.height  # Número de filas con error
+                
+                # Si hay errores, guardarlos y registrar
+                if total_errores > 0:
+                    # Guardar errores en archivo Parquet
+                    self._guardar_errores(id_val, resultado)
+                    
+                    # Obtener muestra (10 primeros registros)
+                    muestra = resultado.head(10).to_dicts()
+                    
+                    # Agregar al resultado
+                    self.resultado.agregar_resultado_validacion(
+                        id_regla=id_val,
+                        descripcion=descripcion,
+                        total_errores=total_errores,
+                        muestra=muestra,
+                        grupo=grupo,
+                        seccion=seccion,
+                        bandera=bandera,
+                        query=query  # Guardar query para referencia
+                    )
+                else:
+                    # No hay errores, igual contar como validación exitosa
+                    self.resultado.resumen["total_validaciones"] += 1
+                    
+            except Exception as e:
+                # Si hay error en la ejecución de la regla
+                print(f"Error ejecutando regla {id_val}: {str(e)}")
+                # Marcar que hubo problema estructural
+                self.resultado.estructura_ok = False
+                # Agregar información del error
+                self.resultado.agregar_resultado_validacion(
+                    id_regla=id_val,
+                    descripcion=f"ERROR EN EJECUCIÓN: {descripcion}",
+                    total_errores=-1,
+                    muestra=[],
+                    error=str(e)
+                )
+        
+        # Retornar diccionario con resultados
+        return self.resultado.to_dict()
+    
+    def _guardar_errores(self, id_val: int, df_error: pl.DataFrame):
+        """
+        Guarda los registros con error en archivo Parquet
+        Método privado (empieza con _) solo usado dentro de la clase
+        """
+        # Construir ruta: logs/.../parte_X/rango_Y/sla/
+        ruta = (self.base_log_path / 
+                f"parte_{self.id_parte}" / 
+                f"rango_{self.id_rango}" / 
+                f"sla")
+        
+        # Crear directorios si no existen
+        ruta.mkdir(parents=True, exist_ok=True)
+        
+        # Archivo: regla_ID.parquet
+        archivo = ruta / f"regla_{id_val}.parquet"
+        
+        # Guardar como Parquet con compresión
+        df_error.write_parquet(
+            archivo,
+            compression="zstd",      # Compresión buena relación tamaño/velocidad
+            statistics=True           # Guardar estadísticas para consultas rápidas
+        )
