@@ -4,91 +4,79 @@ from pathlib import Path
 import json
 import polars as pl
 from typing import Dict, List, Any, Optional
-import logging
+import sys
 
 from repositorio_configuracion import RepositorioConfiguracion
 from fabrica_cargador_archivos import FabricaCargadorArchivos
 from fabrica_validadores import FabricaValidadores
 
-# Importar validadores disponibles
-from validador_sla import ValidadorSLA
-from validador_cruce import ValidadorCruce
-
 
 class OrquestadorInsumo:
     """
-    Orquestador principal que coordina todo el proceso:
-    1. Carga configuración desde BD
-    2. Carga archivo de datos UNA VEZ
-    3. Itera partes y rangos
-    4. Para cada rango, ejecuta TODOS los tipos de validación
+    Orquestador principal que coordina todo el proceso
     """
     
-    def __init__(self, id_insumo: int, ruta_db: str, modo_streaming: bool = True):
-        """
-        Constructor del orquestador
-        """
+    def __init__(self, id_insumo: int, ruta_db: str, modo_streaming: bool = True, verbose: bool = False):
         self.id_insumo = id_insumo
         self.ruta_db = ruta_db
         self.modo_streaming = modo_streaming
-        
-        # Configurar logging para seguimiento
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        self.logger = logging.getLogger(f"Orquestador_{id_insumo}")
+        self.verbose = verbose
+    
+    def _log(self, mensaje: str, nivel: str = "INFO"):
+        """Método simple para logging"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        if nivel == "INFO" or self.verbose:
+            print(f"[{timestamp}] {mensaje}")
     
     def procesar(self) -> Dict[str, Any]:
         """
         Método principal que ejecuta todo el procesamiento
         """
-        # 1. Crear directorio para logs con timestamp
+        # Crear directorio para logs
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         base_log_path = Path("logs") / f"insumo_{self.id_insumo}_{timestamp}"
         base_log_path.mkdir(parents=True, exist_ok=True)
         
-        self.logger.info(f"Iniciando procesamiento de insumo {self.id_insumo}")
-        self.logger.info(f"Logs guardados en: {base_log_path}")
+        self._log(f"Iniciando procesamiento de insumo {self.id_insumo}")
+        self._log(f"Logs guardados en: {base_log_path}")
         
-        # Lista para guardar resultados de TODOS los rangos
         resultados_globales = []
         
-        # 2. Usar context manager para BD (se cierra automáticamente)
+        # Usar context manager para BD
         with RepositorioConfiguracion(self.ruta_db) as repo:
             
-            # 2.1 Obtener datos básicos del insumo
+            # Obtener datos básicos del insumo
             insumo = repo.obtener_insumo(self.id_insumo)
             if not insumo:
                 raise ValueError(f"Insumo {self.id_insumo} no encontrado")
             
             id_insumo, ruta_archivo, tipo_archivo = insumo
-            self.logger.info(f"Archivo: {ruta_archivo} (tipo: {tipo_archivo})")
+            self._log(f"Archivo: {ruta_archivo} (tipo: {tipo_archivo})")
             
-            # 2.2 Obtener partes del insumo
+            # Obtener partes
             partes = repo.obtener_partes(self.id_insumo)
-            self.logger.info(f"Partes encontradas: {len(partes)}")
+            self._log(f"Partes encontradas: {len(partes)}")
             
-            # 2.3 Obtener validaciones AGRUPADAS POR TIPO
+            # Obtener validaciones por tipo
             validaciones_por_tipo = repo.obtener_validaciones_por_tipo(self.id_insumo)
-            self.logger.info("Tipos de validación encontrados:")
+            self._log("Tipos de validación encontrados:")
             for tipo, reglas in validaciones_por_tipo.items():
-                self.logger.info(f"  - {tipo}: {len(reglas)} reglas")
+                self._log(f"  → {tipo}: {len(reglas)} reglas")
             
-            # 2.4 Cargar archivo UNA SOLA VEZ (lazy)
-            self.logger.info("Cargando archivo...")
+            # Cargar archivo UNA VEZ
+            self._log("Cargando archivo...")
             lf_completo = FabricaCargadorArchivos.cargar(
                 ruta=ruta_archivo,
                 tipo_archivo=tipo_archivo
             )
             
-            # 3. Iterar sobre cada parte
+            # Iterar sobre cada parte
             for idx_parte, parte in enumerate(partes, 1):
                 id_parte, num_parte, nombre_hoja = parte
                 
-                self.logger.info(f"Procesando parte {idx_parte}/{len(partes)}: {nombre_hoja}")
+                self._log(f"Procesando parte {idx_parte}/{len(partes)}: {nombre_hoja}")
                 
-                # 3.1 Para Excel, cargar hoja específica
+                # Para Excel, cargar hoja específica
                 if tipo_archivo == "EXCEL" and nombre_hoja:
                     lf_parte = pl.read_excel(
                         ruta_archivo,
@@ -98,50 +86,47 @@ class OrquestadorInsumo:
                 else:
                     lf_parte = lf_completo
                 
-                # 3.2 Obtener rangos de esta parte
+                # Obtener rangos de esta parte
                 rangos = repo.obtener_rangos(id_parte)
-                self.logger.info(f"  Rangos encontrados: {len(rangos)}")
+                self._log(f"  Rangos encontrados: {len(rangos)}")
                 
-                # 3.3 Iterar sobre cada rango
+                # Iterar sobre cada rango
                 for rango in rangos:
                     id_rango, num_rango, nombre_rango, col_ini, col_fin = rango
                     
-                    self.logger.info(f"    Procesando rango {num_rango}: {nombre_rango}")
+                    self._log(f"    Procesando rango {num_rango}: {nombre_rango}")
                     
-                    # 3.3.1 Obtener definición de columnas para este rango
+                    # Obtener definición de columnas
                     esquema = repo.obtener_definicion_columnas(id_rango)
                     
-                    # 3.3.2 Aplicar rango (seleccionar columnas específicas)
+                    # Aplicar rango
                     lf_rango = lf_parte.select(
                         pl.all().slice(col_ini, col_fin - col_ini + 1)
                     )
                     
-                    # 3.3.3 Verificar que coincida el número de columnas
+                    # Verificar columnas
                     if len(lf_rango.columns) != len(esquema):
-                        self.logger.warning(
-                            f"      Columnas: {len(lf_rango.columns)} en archivo, "
-                            f"{len(esquema)} definidas"
-                        )
+                        self._log(f"      ⚠ Columnas: {len(lf_rango.columns)} en archivo, {len(esquema)} definidas", "WARN")
                     
-                    # 3.3.4 Renombrar columnas según definición
+                    # Renombrar columnas
                     nombres = list(esquema.keys())
                     lf_rango = lf_rango.rename(
                         dict(zip(lf_rango.columns, nombres))
                     )
                     
-                    # 3.3.5 Aplicar tipos de datos
+                    # Aplicar tipos
                     lf_rango = lf_rango.cast(esquema)
                     
-                    # 3.3.6 Recolectar datos (convertir lazy a eager)
+                    # Recolectar datos
                     try:
                         if self.modo_streaming:
                             df_rango = lf_rango.collect(streaming=True)
                         else:
                             df_rango = lf_rango.collect()
                         
-                        self.logger.info(f"      Filas: {df_rango.height}")
+                        self._log(f"      Filas: {df_rango.height}")
                         
-                        # 3.3.7 Metadata común para todos los validadores
+                        # Metadata común
                         metadata_base = {
                             "num_parte": num_parte,
                             "nombre_hoja": nombre_hoja,
@@ -152,16 +137,16 @@ class OrquestadorInsumo:
                             "rango_columnas": f"{col_ini}-{col_fin}"
                         }
                         
-                        # 3.3.8 Ejecutar CADA TIPO de validación configurado
+                        # Ejecutar cada tipo de validación
                         for tipo_validacion, reglas in validaciones_por_tipo.items():
                             
-                            if not reglas:  # Saltar si no hay reglas de este tipo
+                            if not reglas:
                                 continue
                             
-                            self.logger.info(f"      Ejecutando {tipo_validacion}...")
+                            self._log(f"      Ejecutando {tipo_validacion}...")
                             
                             try:
-                                # Crear validador específico usando la fábrica
+                                # Crear validador
                                 validador = FabricaValidadores.crear(
                                     tipo=tipo_validacion,
                                     id_insumo=id_insumo,
@@ -171,18 +156,16 @@ class OrquestadorInsumo:
                                     reglas=reglas,
                                     base_log_path=base_log_path,
                                     metadata=metadata_base,
-                                    # Para cruces, necesitamos el repositorio
                                     repositorio=repo if tipo_validacion == "CRUCE" else None
                                 )
                                 
-                                # Usar context manager del validador
+                                # Ejecutar validación
                                 with validador as v:
                                     resultado = v.validar()
                                     resultados_globales.append(resultado)
                                 
                             except Exception as e:
-                                self.logger.error(f"      Error en {tipo_validacion}: {str(e)}")
-                                # Registrar error pero continuar con otros tipos
+                                self._log(f"      ⚠ Error en {tipo_validacion}: {str(e)}", "ERROR")
                                 resultados_globales.append({
                                     "id_insumo": id_insumo,
                                     "id_parte": id_parte,
@@ -201,8 +184,7 @@ class OrquestadorInsumo:
                                 })
                     
                     except Exception as e:
-                        self.logger.error(f"      Error procesando rango: {str(e)}")
-                        # Si falla el rango completo, registrar error
+                        self._log(f"      ⚠ Error procesando rango: {str(e)}", "ERROR")
                         resultados_globales.append({
                             "id_insumo": id_insumo,
                             "id_parte": id_parte,
@@ -223,30 +205,29 @@ class OrquestadorInsumo:
                             }
                         })
         
-        # 4. Guardar todos los resultados
+        # Guardar resultados
         self._guardar_resultados(resultados_globales, base_log_path)
         
-        # 5. Calcular resumen final
-        resumen_final = self._generar_resumen(resultados_globales)
+        # Generar resumen
+        resumen = self._generar_resumen(resultados_globales)
         
-        self.logger.info("=" * 50)
-        self.logger.info("PROCESAMIENTO COMPLETADO")
-        self.logger.info(f"Total rangos procesados: {len(resultados_globales)}")
-        self.logger.info(f"Total errores encontrados: {resumen_final['total_errores']}")
-        self.logger.info(f"Resultados guardados en: {base_log_path}")
-        self.logger.info("=" * 50)
+        print("\n" + "="*50)
+        print("PROCESAMIENTO COMPLETADO")
+        print("="*50)
+        print(f"Total rangos procesados: {len(resultados_globales)}")
+        print(f"Total errores encontrados: {resumen['total_errores']}")
+        print(f"Resultados guardados en: {base_log_path}")
+        print("="*50)
         
         return {
             "id_insumo": self.id_insumo,
             "fecha_proceso": datetime.now().isoformat(),
-            "resumen": resumen_final,
+            "resumen": resumen,
             "archivo_resultados": str(base_log_path / "resultados.json")
         }
     
     def _guardar_resultados(self, resultados: List[Dict], base_log_path: Path):
-        """
-        Guarda todos los resultados en un archivo JSON
-        """
+        """Guarda resultados en JSON"""
         archivo_json = base_log_path / "resultados.json"
         
         with open(archivo_json, "w", encoding="utf-8") as f:
@@ -255,27 +236,23 @@ class OrquestadorInsumo:
                 "fecha_proceso": datetime.now().isoformat(),
                 "total_resultados": len(resultados),
                 "resultados": resultados
-            }, f, indent=4, default=str)  # default=str para manejar fechas
+            }, f, indent=4, default=str)
         
-        self.logger.info(f"JSON guardado: {archivo_json}")
+        self._log(f"JSON guardado: {archivo_json}")
     
     def _generar_resumen(self, resultados: List[Dict]) -> Dict:
-        """
-        Genera resumen estadístico de todos los resultados
-        """
+        """Genera resumen estadístico"""
         total_errores = 0
         total_validaciones = 0
         validaciones_con_error = 0
         rangos_ok = 0
         
         for r in resultados:
-            # Sumar si tiene resumen (validaciones que sí ejecutaron)
             if "resumen" in r:
                 total_validaciones += r["resumen"]["total_validaciones"]
                 validaciones_con_error += r["resumen"]["validaciones_con_error"]
                 total_errores += r["resumen"]["total_errores"]
             
-            # Contar rangos con estructura ok
             if r.get("estructura_ok", False):
                 rangos_ok += 1
         
