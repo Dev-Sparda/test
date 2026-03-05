@@ -1,7 +1,10 @@
-# main.py
-import argparse
-import sys
-
+# main_simple.py
+from datetime import datetime
+from pathlib import Path
+import json
+from repositorio_configuracion_simple import RepositorioConfiguracion
+from orquestador_insumo import OrquestadorInsumo
+from config import DB_CONFIG
 from fabrica_validadores import FabricaValidadores
 from validador_sla import ValidadorSLA
 from validador_cruce import ValidadorCruce
@@ -9,49 +12,199 @@ from validador_cruce import ValidadorCruce
 
 def registrar_validadores():
     """Registra todos los tipos de validadores"""
-    print("\n" + "="*50)
-    print("REGISTRO DE VALIDADORES")
-    print("="*50)
+    print("\n📝 Registrando validadores...")
     FabricaValidadores.registrar("SLA", ValidadorSLA)
     FabricaValidadores.registrar("CRUCE", ValidadorCruce)
-    print(f"\n✅ Validadores disponibles: {FabricaValidadores.obtener_tipos_disponibles()}")
+    print(f"✅ Validadores disponibles: {FabricaValidadores.obtener_tipos_disponibles()}")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Validador de Insumos")
-    parser.add_argument("--id_insumo", type=int, required=True, help="ID del insumo")
-    parser.add_argument("--db_path", type=str, default="configuracion.db", help="Ruta a BD")
-    parser.add_argument("--no-streaming", action="store_true", help="Deshabilitar streaming")
-    parser.add_argument("--verbose", action="store_true", help="Mostrar detalles")
+def procesar_todos_los_insumos():
+    """Procesa TODOS los insumos que tengan configuración"""
     
-    args = parser.parse_args()
+    print("\n" + "="*70)
+    print("🚀 INICIANDO PROCESAMIENTO AUTOMÁTICO DE INSUMOS")
+    print("="*70)
     
     registrar_validadores()
     
-    from orquestador_insumo import OrquestadorInsumo
-    
-    orquestador = OrquestadorInsumo(
-        id_insumo=args.id_insumo,
-        ruta_db=args.db_path,
-        modo_streaming=not args.no_streaming,
-        verbose=args.verbose
-    )
-    
-    try:
-        print(f"\n🚀 Procesando insumo {args.id_insumo}")
-        print(f"📂 BD: {args.db_path}")
-        print("-" * 50)
+    with RepositorioConfiguracion(DB_CONFIG) as repo:
         
-        orquestador.procesar()
-        return 0
+        # Obtener IDs de insumos a procesar (desde INSUMOS_PARTES)
+        ids_insumos = repo.obtener_insumos_a_procesar()
         
-    except Exception as e:
-        print(f"\n❌ ERROR: {str(e)}")
-        if args.verbose:
-            import traceback
-            traceback.print_exc()
-        return 1
+        if not ids_insumos:
+            print("\n⚠️ No hay insumos para procesar")
+            return
+        
+        print(f"\n📋 Insumos encontrados para procesar: {ids_insumos}")
+        
+        resultados_globales = {}
+        resumen = {
+            "total_insumos": len(ids_insumos),
+            "insumos_ok": 0,
+            "insumos_error": 0,
+            "total_errores": 0
+        }
+        
+        # Procesar cada insumo
+        for idx, id_insumo in enumerate(ids_insumos, 1):
+            print(f"\n" + "─"*50)
+            print(f"📦 Procesando insumo {idx}/{len(ids_insumos)}: ID {id_insumo}")
+            print("─"*50)
+            
+            try:
+                orquestador = OrquestadorInsumo(
+                    id_insumo=id_insumo,
+                    ruta_db=DB_CONFIG,
+                    modo_streaming=True,
+                    verbose=True
+                )
+                
+                resultado = orquestador.procesar()
+                resultados_globales[id_insumo] = resultado
+                
+                # Actualizar resumen
+                resumen["insumos_ok"] += 1
+                if "resumen" in resultado:
+                    resumen["total_errores"] += resultado["resumen"].get("total_errores", 0)
+                
+                print(f"\n✅ Insumo {id_insumo} procesado correctamente")
+                
+            except Exception as e:
+                print(f"\n❌ Error procesando insumo {id_insumo}: {e}")
+                resultados_globales[id_insumo] = {
+                    "error": str(e),
+                    "fecha_proceso": datetime.now().isoformat()
+                }
+                resumen["insumos_error"] += 1
+        
+        # Guardar reporte global
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        reporte_path = Path("logs") / f"reporte_global_{timestamp}.json"
+        reporte_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        reporte_final = {
+            "fecha_proceso": datetime.now().isoformat(),
+            "resumen_global": resumen,
+            "insumos_procesados": ids_insumos,
+            "detalle_por_insumo": resultados_globales
+        }
+        
+        with open(reporte_path, "w", encoding="utf-8") as f:
+            json.dump(reporte_final, f, indent=4, default=str)
+        
+        print("\n" + "="*70)
+        print("✅ PROCESAMIENTO GLOBAL COMPLETADO")
+        print("="*70)
+        print(f"📊 RESUMEN:")
+        print(f"   • Total insumos: {resumen['total_insumos']}")
+        print(f"   • Correctos: {resumen['insumos_ok']}")
+        print(f"   • Con errores: {resumen['insumos_error']}")
+        print(f"   • Total errores detectados: {resumen['total_errores']}")
+        print(f"\n📁 Reporte global: {reporte_path}")
+        print("="*70)
+
+
+def procesar_insumo_especifico(id_insumo: int):
+    """Procesa un insumo específico"""
+    
+    print("\n" + "="*70)
+    print(f"🎯 PROCESANDO INSUMO ESPECÍFICO: {id_insumo}")
+    print("="*70)
+    
+    registrar_validadores()
+    
+    with RepositorioConfiguracion(DB_CONFIG) as repo:
+        
+        # Verificar que el insumo existe en la configuración
+        ids_disponibles = repo.obtener_insumos_a_procesar()
+        
+        if id_insumo not in ids_disponibles:
+            print(f"\n⚠️ El insumo {id_insumo} no tiene configuración en la BD")
+            print(f"   Insumos disponibles: {ids_disponibles}")
+            return None
+        
+        try:
+            orquestador = OrquestadorInsumo(
+                id_insumo=id_insumo,
+                ruta_db=DB_CONFIG,
+                modo_streaming=True,
+                verbose=True
+            )
+            
+            resultado = orquestador.procesar()
+            
+            # Guardar resultado individual
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            resultado_path = Path("logs") / f"insumo_{id_insumo}_{timestamp}.json"
+            
+            with open(resultado_path, "w", encoding="utf-8") as f:
+                json.dump(resultado, f, indent=4, default=str)
+            
+            print(f"\n✅ Insumo {id_insumo} procesado correctamente")
+            print(f"📁 Resultado guardado: {resultado_path}")
+            
+            return resultado
+            
+        except Exception as e:
+            print(f"\n❌ Error procesando insumo {id_insumo}: {e}")
+            return None
+
+
+def procesar_insumos_por_lote(ids_insumos: list):
+    """Procesa una lista específica de insumos"""
+    
+    print("\n" + "="*70)
+    print(f"📦 PROCESANDO LOTE DE INSUMOS: {ids_insumos}")
+    print("="*70)
+    
+    registrar_validadores()
+    
+    with RepositorioConfiguracion(DB_CONFIG) as repo:
+        
+        resultados = {}
+        
+        for id_insumo in ids_insumos:
+            print(f"\n" + "─"*40)
+            print(f"Procesando insumo {id_insumo}...")
+            
+            try:
+                orquestador = OrquestadorInsumo(
+                    id_insumo=id_insumo,
+                    ruta_db=DB_CONFIG,
+                    modo_streaming=True,
+                    verbose=True
+                )
+                
+                resultado = orquestador.procesar()
+                resultados[id_insumo] = resultado
+                print(f"✅ OK")
+                
+            except Exception as e:
+                print(f"❌ Error: {e}")
+                resultados[id_insumo] = {"error": str(e)}
+        
+        return resultados
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    """
+    PUNTO DE ENTRADA PRINCIPAL
+    ==========================
+    Elige qué quieres hacer:
+    
+    1. procesar_todos_los_insumos()           - Procesa todos los insumos
+    2. procesar_insumo_especifico(212)        - Procesa un insumo específico
+    3. procesar_insumos_por_lote([212, 213])  - Procesa una lista
+    """
+    
+    # 👇 CAMBIA ESTA LÍNEA SEGÚN LO QUE NECESITES
+    
+    # Opción 1: Procesar TODOS (recomendado)
+    procesar_todos_los_insumos()
+    
+    # Opción 2: Procesar UNO específico
+    # procesar_insumo_especifico(212)
+    
+    # Opción 3: Procesar VARIOS específicos
+    # procesar_insumos_por_lote([212, 213, 215])
