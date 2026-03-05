@@ -1,0 +1,52 @@
+# fabrica_validadores.py
+from typing import Dict, Type, Any
+from interfaces import Validador
+
+
+class FabricaValidadores:
+    """
+    Fábrica que crea validadores según el tipo solicitado
+    Patrón de diseño: Factory Method
+    Permite agregar nuevos validadores sin modificar el código existente
+    """
+    
+    # Diccionario que asocia TIPO_VAL con la CLASE que implementa ese validador
+    # Es una variable de CLASE (compartida por todas las instancias)
+    _validadores: Dict[str, Type[Validador]] = {}
+    
+    @classmethod
+    def registrar(cls, tipo: str, validador_class: Type[Validador]):
+        """
+        Método de clase para registrar un nuevo tipo de validador
+        Se llama UNA VEZ al inicio del programa por cada tipo
+        """
+        cls._validadores[tipo] = validador_class
+        print(f"✅ Validador registrado: {tipo} -> {validador_class.__name__}")
+    
+    @classmethod
+    def crear(cls, tipo: str, **kwargs) -> Validador:
+        """
+        Método de clase que crea una instancia del validador apropiado
+        **kwargs captura TODOS los parámetros y los pasa al constructor
+        """
+        # Buscar la clase del validador
+        validador_class = cls._validadores.get(tipo)
+        
+        if validador_class is None:
+            # Si no existe, mostrar todos los tipos disponibles
+            tipos_disponibles = list(cls._validadores.keys())
+            raise ValueError(
+                f"Tipo de validador no registrado: '{tipo}'. "
+                f"Tipos disponibles: {tipos_disponibles}"
+            )
+        
+        # Crear una instancia de la clase encontrada
+        # Los **kwargs pasan todos los parámetros al constructor
+        return validador_class(**kwargs)
+    
+    @classmethod
+    def obtener_tipos_disponibles(cls) -> List[str]:
+        """
+        Retorna lista de tipos de validador registrados
+        """
+        return list(cls._validadores.keys())
