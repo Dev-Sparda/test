@@ -1,0 +1,71 @@
+# config.py
+from pathlib import Path
+from datetime import datetime
+
+# ============================================
+# RUTAS BASE DEL SISTEMA
+# ============================================
+
+# Ruta raíz del repositorio de insumos (cambia esto según tu instalación)
+REPOSITORIO_INSUMOS = Path("/ruta/a/tu/repositorio/insumos")  # Ej: /data/insumos/
+
+# Ruta para logs de validaciones
+RUTA_LOGS = Path("logs")
+
+# ============================================
+# BASE DE DATOS DE CONFIGURACIÓN
+# ============================================
+
+# Archivo de base de datos DuckDB (puede ser .db o .duckdb)
+DB_CONFIG = Path("configuracion.db")
+
+# Nombres de tablas en la base de datos
+DB_CAT_INSUMOS = "CAT_INSUMOS"        # Catálogo de insumos
+DB_INSUMOS_PARTES = "INSUMOS_PARTES"   # Partes de cada insumo
+DB_INSUMOS_RANGOS = "INSUMOS_RANGOS"   # Rangos de cada parte
+DB_DEFINICION_INSUMOS = "DEFINICION_INSUMOS"  # Definición de columnas
+DB_MOTOR_VAL = "MOTOR_VAL"             # Reglas de validación
+
+# ============================================
+# FORMATOS DE FECHA PARA CARPETAS
+# ============================================
+
+# Formatos de fecha soportados para carpetas
+# Ejemplo: "Mock Insumo/mock 1/2024/202401" usa dos niveles
+FORMATOS_FECHA = {
+    "%Y": "Año completo (2024)",
+    "%Y%m": "Año y mes (202401)",
+    "%Y/%Y%m": "Año/mes (2024/202401)",
+    "%Y/%m": "Año/mes numérico (2024/01)",
+    "%Y-%m": "Año-mes (2024-01)"
+}
+
+# ============================================
+# CONFIGURACIÓN DE ARCHIVOS
+# ============================================
+
+# Extensiones de archivo por tipo
+TIPOS_ARCHIVO = {
+    "CSV": [".csv", ".CSV"],
+    "TXT": [".txt", ".TXT", ".tsv", ".TSV"],
+    "EXCEL": [".xlsx", ".xls", ".XLSX", ".XLS"]
+}
+
+# ============================================
+# FUNCIONES DE UTILIDAD PARA RUTAS
+# ============================================
+
+def obtener_ruta_insumo(id_insumo: int, fecha_referencia: datetime = None) -> Path:
+    """
+    Construye la ruta completa a un insumo basado en su ID y fecha
+    
+    Args:
+        id_insumo: ID del insumo
+        fecha_referencia: Fecha para reemplazar en la ruta (default: hoy)
+    
+    Returns:
+        Path: Ruta completa al archivo
+    """
+    # Esta función se usará después de consultar CAT_INSUMOS
+    # Por ahora es un placeholder
+    pass
