@@ -15,3 +15,47 @@ INSERT INTO MOTOR_VAL (ID_INSUMO, TIPO_VAL, VALIDACION, DESCRIPCION, CONFIG_JSON
 VALUES (123, 'CRUCE', 'cruce_clientes', 'Clientes no encontrados en maestro', 
         '{"id_insumo_secundario": 456, "tipo_cruce": "anti", "condiciones": ["principal.CLIENTE_ID = secundario.ID"]}', 
         TRUE);
+
+
+
+
+
+-
+CREATE TABLE MOTOR_VAL (
+    -- Identificador único de la validación
+    ID_VAL INTEGER PRIMARY KEY,
+    
+    -- ID del insumo al que aplica esta validación
+    ID_INSUMO INTEGER NOT NULL,
+    
+    -- Tipo de validación: 'SLA', 'CRUCE', 'CALIDAD', 'HISTORICO', etc.
+    TIPO_VAL VARCHAR(20) NOT NULL DEFAULT 'SLA',
+    
+    -- Para SLA: Query SQL que se ejecuta contra la tabla 'datos'
+    -- Para CRUCE: Puede ser ID del otro insumo o configuración
+    VALIDACION VARCHAR(1000) NOT NULL,
+    
+    -- Descripción legible de la validación
+    DESCRIPCION VARCHAR(500),
+    
+    -- Agrupación (ej: 'CALIDAD', 'INTEGRIDAD', 'NEGOCIO')
+    GRUPO VARCHAR(100),
+    
+    -- Sección dentro del grupo
+    SECCION VARCHAR(100),
+    
+    -- Bandera de severidad: 'ROJA', 'AMARILLA', 'VERDE'
+    BANDERA VARCHAR(20),
+    
+    -- Configuración adicional en JSON para validaciones complejas
+    CONFIG_JSON TEXT,
+    
+    -- Estatus: TRUE = activa, FALSE = inactiva
+    ESTATUS BOOLEAN DEFAULT TRUE,
+    
+    -- Fechas de auditoría (opcional)
+    FECHA_CREACION TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FECHA_MODIFICACION TIMESTAMP,
+    USUARIO_CREACION VARCHAR(100),
+    USUARIO_MODIFICACION VARCHAR(100)
+);
