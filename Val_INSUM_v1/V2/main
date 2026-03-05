@@ -1,0 +1,118 @@
+# main.py
+import argparse
+import sys
+from pathlib import Path
+
+# Registrar todos los validadores disponibles al inicio
+from fabrica_validadores import FabricaValidadores
+from validador_sla import ValidadorSLA
+from validador_cruce import ValidadorCruce
+
+# Si en el futuro creas ValidadorCalidad, ValidadorHistorico, etc.
+# los importas y registras aquí
+
+def registrar_validadores():
+    """
+    Registra todos los tipos de validadores disponibles en el sistema
+    Se ejecuta UNA VEZ al iniciar el programa
+    """
+    FabricaValidadores.registrar("SLA", ValidadorSLA)
+    FabricaValidadores.registrar("CRUCE", ValidadorCruce)
+    # En el futuro:
+    # FabricaValidadores.registrar("CALIDAD", ValidadorCalidad)
+    # FabricaValidadores.registrar("HISTORICO", ValidadorHistorico)
+    
+    print("✅ Validadores registrados:")
+    for tipo in FabricaValidadores.obtener_tipos_disponibles():
+        print(f"   - {tipo}")
+
+
+def main():
+    """
+    Función principal que procesa argumentos de línea de comandos
+    """
+    # Configurar parser de argumentos
+    parser = argparse.ArgumentParser(
+        description="Validador de Insumos - Procesa archivos según configuración en BD"
+    )
+    
+    parser.add_argument(
+        "--id_insumo", 
+        type=int, 
+        required=True,
+        help="ID del insumo a procesar (obligatorio)"
+    )
+    
+    parser.add_argument(
+        "--db_path", 
+        type=str, 
+        default="configuracion.db",
+        help="Ruta a la base de datos SQLite/DuckDB (default: configuracion.db)"
+    )
+    
+    parser.add_argument(
+        "--no-streaming", 
+        action="store_true",
+        help="Deshabilitar modo streaming (útil para archivos pequeños)"
+    )
+    
+    parser.add_argument(
+        "--verbose", 
+        action="store_true",
+        help="Mostrar logs detallados"
+    )
+    
+    # Parsear argumentos
+    args = parser.parse_args()
+    
+    # Configurar nivel de logging
+    if args.verbose:
+        logging_level = logging.DEBUG
+    else:
+        logging_level = logging.INFO
+    
+    logging.basicConfig(level=logging_level)
+    
+    # Registrar validadores disponibles
+    registrar_validadores()
+    
+    # Crear orquestador
+    from orquestador_insumo import OrquestadorInsumo
+    
+    orquestador = OrquestadorInsumo(
+        id_insumo=args.id_insumo,
+        ruta_db=args.db_path,
+        modo_streaming=not args.no_streaming
+    )
+    
+    # Ejecutar procesamiento
+    try:
+        print(f"\n🚀 Iniciando procesamiento de insumo {args.id_insumo}")
+        print(f"📂 Base de datos: {args.db_path}")
+        print(f"💾 Modo streaming: {not args.no_streaming}")
+        print("-" * 50)
+        
+        resultados = orquestador.procesar()
+        
+        print("\n" + "=" * 50)
+        print("✅ PROCESAMIENTO COMPLETADO EXITOSAMENTE")
+        print("=" * 50)
+        print(f"📊 Resumen:")
+        print(f"   - Rangos procesados: {resultados['resumen']['total_rangos']}")
+        print(f"   - Validaciones ejecutadas: {resultados['resumen']['total_validaciones_ejecutadas']}")
+        print(f"   - Total errores: {resultados['resumen']['total_errores_detectados']}")
+        print(f"📁 Resultados en: {resultados['archivo_resultados']}")
+        
+        return 0  # Código de éxito
+        
+    except Exception as e:
+        print(f"\n❌ ERROR: {str(e)}", file=sys.stderr)
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        return 1  # Código de error
+
+
+if __name__ == "__main__":
+    # Ejecutar main y salir con el código retornado
+    sys.exit(main())
