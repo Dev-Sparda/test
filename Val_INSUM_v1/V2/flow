@@ -1,0 +1,78 @@
+1. USUARIO EJECUTA main.py
+   │
+   ├─► 2. main.py registra validadores en Fábrica
+   │    │
+   │    └─► FabricaValidadores.registrar("SLA", ValidadorSLA)
+   │        FabricaValidadores.registrar("CRUCE", ValidadorCruce)
+   │
+   ├─► 3. main.py crea OrquestadorInsumo
+   │    │
+   │    └─► orquestador = OrquestadorInsumo(id_insumo=123, ...)
+   │
+   └─► 4. main.py ejecuta orquestador.procesar()
+        │
+        └─► INICIA PROCESAMIENTO
+             │
+             ├─► 5. Crea carpeta logs/insumo_123_timestamp/
+             │
+             ├─► 6. Conecta a BD (with RepositorioConfiguracion)
+             │    │
+             │    ├─► 6.1 Obtiene datos del INSUMO (ruta_archivo, tipo)
+             │    │
+             │    ├─► 6.2 Obtiene PARTES del insumo
+             │    │    └─► [(1, 1, "VENTAS"), (2, 2, "CLIENTES")]
+             │    │
+             │    └─► 6.3 Obtiene VALIDACIONES agrupadas por tipo
+             │         └─► {"SLA": [regla1, regla2], "CRUCE": [regla3]}
+             │
+             ├─► 7. Carga archivo UNA VEZ (FabricaCargadorArchivos)
+             │    └─► lf_completo = LazyFrame (no carga datos aún)
+             │
+             ├─► 8. Itera sobre cada PARTE
+             │    │
+             │    └─► Para PARTE 1 (VENTAS):
+             │         │
+             │         ├─► 8.1 Si es Excel, carga hoja específica
+             │         │
+             │         ├─► 8.2 Obtiene RANGOS de esta parte
+             │         │    └─► [(101, 1, "DATOS_CLIENTE", 0, 5)]
+             │         │
+             │         └─► 8.3 Itera sobre cada RANGO
+             │              │
+             │              └─► Para RANGO 1 (DATOS_CLIENTE):
+             │                   │
+             │                   ├─► 8.3.1 Obtiene DEFINICIÓN COLUMNAS
+             │                   │      └─► {"NOMBRE": pl.Utf8, "EDAD": pl.Int64}
+             │                   │
+             │                   ├─► 8.3.2 Aplica rango (slice de columnas)
+             │                   │      └─► Selecciona columnas 0 a 5
+             │                   │
+             │                   ├─► 8.3.3 Renombra columnas según definición
+             │                   │
+             │                   ├─► 8.3.4 Aplica tipos de datos
+             │                   │
+             │                   ├─► 8.3.5 Recolecta datos (collect)
+             │                   │      └─► df_rango = DataFrame con datos reales
+             │                   │
+             │                   └─► 8.3.6 Itera sobre cada TIPO DE VALIDACIÓN
+             │                        │
+             │                        └─► Para tipo "SLA":
+             │                             │
+             │                             ├─► FabricaValidadores.crear("SLA", ...)
+             │                             │   └─► Crea instancia de ValidadorSLA
+             │                             │
+             │                             └─► Ejecuta validador (with v:)
+             │                                  │
+             │                                  ├─► __enter__: 
+             │                                  │   ├─► Crea conexión DuckDB
+             │                                  │   └─► Registra datos como tabla
+             │                                  │
+             │                                  ├─► validar(): 
+             │                                  │   ├─► Ejecuta cada regla SQL
+             │                                  │   ├─► Guarda errores en Parquet
+             │                                  │   └─► Acumula resultados
+             │                                  │
+             │                                  └─► __exit__: Cierra conexión
+             │
+             └─► 9. Guarda TODOS los resultados en JSON
+                  └─► resultados.json
