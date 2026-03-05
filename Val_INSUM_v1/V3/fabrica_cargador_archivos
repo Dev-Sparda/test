@@ -1,0 +1,40 @@
+# fabrica_cargador_archivos.py
+import polars as pl
+from pathlib import Path
+
+
+class FabricaCargadorArchivos:
+    """Fábrica que carga archivos según su tipo"""
+    
+    @staticmethod
+    def cargar(ruta: str, tipo_archivo: str, hoja: str = None):
+        """Carga un archivo según el tipo especificado"""
+        
+        if not Path(ruta).exists():
+            raise FileNotFoundError(f"Archivo no encontrado: {ruta}")
+        
+        if tipo_archivo == "CSV":
+            return pl.scan_csv(
+                ruta,
+                has_header=False,
+                infer_schema_length=0,
+                low_memory=True
+            )
+        
+        elif tipo_archivo == "TXT":
+            return pl.scan_csv(
+                ruta,
+                separator="\t",
+                has_header=False,
+                infer_schema_length=0,
+                low_memory=True
+            )
+        
+        elif tipo_archivo == "EXCEL":
+            if hoja:
+                return pl.read_excel(ruta, sheet_name=hoja, has_header=False).lazy()
+            else:
+                return pl.read_excel(ruta, has_header=False).lazy()
+        
+        else:
+            raise ValueError(f"Tipo de archivo no soportado: {tipo_archivo}")
