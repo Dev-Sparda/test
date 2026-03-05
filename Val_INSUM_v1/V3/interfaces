@@ -1,0 +1,89 @@
+# interfaces.py
+from abc import ABC, abstractmethod
+from typing import Dict, Any, Optional
+from datetime import datetime
+
+
+class Validador(ABC):
+    """Clase base abstracta para todos los validadores"""
+    
+    @abstractmethod
+    def __enter__(self):
+        """Configura recursos al entrar al bloque with"""
+        pass
+    
+    @abstractmethod
+    def __exit__(self, exc_type, exc_value, traceback):
+        """Limpia recursos al salir del bloque with"""
+        pass
+    
+    @abstractmethod
+    def validar(self) -> Dict[str, Any]:
+        """Ejecuta la validación y retorna resultados"""
+        pass
+    
+    @property
+    @abstractmethod
+    def tipo_validador(self) -> str:
+        """Retorna el tipo de validador"""
+        pass
+
+
+class ResultadoValidacion:
+    """Estructura estándar para resultados de validación"""
+    
+    def __init__(self, 
+                 id_insumo: int,
+                 id_parte: int,
+                 id_rango: int,
+                 tipo_validacion: str,
+                 metadata: Optional[Dict] = None):
+        
+        self.id_insumo = id_insumo
+        self.id_parte = id_parte
+        self.id_rango = id_rango
+        self.tipo_validacion = tipo_validacion
+        self.metadata = metadata or {}
+        self.fecha_proceso = datetime.now().isoformat()
+        self.estructura_ok = True
+        self.validaciones = []
+        self.resumen = {
+            "total_validaciones": 0,
+            "validaciones_con_error": 0,
+            "total_errores": 0
+        }
+    
+    def to_dict(self) -> Dict:
+        """Convierte a diccionario para JSON"""
+        return {
+            "id_insumo": self.id_insumo,
+            "id_parte": self.id_parte,
+            "id_rango": self.id_rango,
+            "tipo_validacion": self.tipo_validacion,
+            "metadata": self.metadata,
+            "fecha_proceso": self.fecha_proceso,
+            "estructura_ok": self.estructura_ok,
+            "validaciones": self.validaciones,
+            "resumen": self.resumen
+        }
+    
+    def agregar_resultado_validacion(self,
+                                     id_regla: int,
+                                     descripcion: str,
+                                     total_errores: int,
+                                     muestra: list,
+                                     **kwargs):
+        """Agrega el resultado de una validación individual"""
+        self.resumen["total_validaciones"] += 1
+        if total_errores > 0:
+            self.resumen["validaciones_con_error"] += 1
+            self.resumen["total_errores"] += total_errores
+        
+        validacion = {
+            "id_regla": id_regla,
+            "descripcion": descripcion,
+            "total_errores": total_errores,
+            "muestra": muestra,
+            **kwargs
+        }
+        self.validaciones.append(validacion)
