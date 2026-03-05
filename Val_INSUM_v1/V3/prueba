@@ -1,0 +1,117 @@
+# crear_bd_prueba.py
+import duckdb
+from config import DB_CONFIG
+
+def crear_base_datos_prueba():
+    """Crea una base de datos de ejemplo para pruebas"""
+    
+    conn = duckdb.connect(str(DB_CONFIG))
+    
+    # Crear tabla CAT_INSUMOS
+    conn.execute("""
+        CREATE OR REPLACE TABLE CAT_INSUMOS (
+            ID_INSUMO INTEGER PRIMARY KEY,
+            RUTA_ARCHIVO VARCHAR,
+            TIPO_ARCHIVO VARCHAR
+        )
+    """)
+    
+    # Insertar datos de ejemplo (¡cambia las rutas a tus archivos reales!)
+    conn.execute("""
+        INSERT INTO CAT_INSUMOS VALUES
+        (1, 'ejemplo/clientes.csv', 'CSV'),
+        (2, 'ejemplo/ventas.xlsx', 'EXCEL')
+    """)
+    
+    # Crear tabla INSUMOS_PARTES
+    conn.execute("""
+        CREATE OR REPLACE TABLE INSUMOS_PARTES (
+            ID_PARTE INTEGER PRIMARY KEY,
+            ID_INSUMO INTEGER,
+            NUM_PARTE INTEGER,
+            NOMBRE_PARTE VARCHAR,
+            ESTATUS BOOLEAN
+        )
+    """)
+    
+    conn.execute("""
+        INSERT INTO INSUMOS_PARTES VALUES
+        (1, 1, 1, 'CLIENTES', TRUE),
+        (2, 1, 2, 'PRODUCTOS', TRUE)
+    """)
+    
+    # Crear tabla INSUMOS_RANGOS
+    conn.execute("""
+        CREATE OR REPLACE TABLE INSUMOS_RANGOS (
+            ID_RANGO INTEGER PRIMARY KEY,
+            ID_PARTE INTEGER,
+            NUM_RANGO INTEGER,
+            NOMBRE_RANGO VARCHAR,
+            COL_INICIO INTEGER,
+            COL_FIN INTEGER,
+            ESTATUS BOOLEAN
+        )
+    """)
+    
+    conn.execute("""
+        INSERT INTO INSUMOS_RANGOS VALUES
+        (1, 1, 1, 'DATOS_CLIENTE', 0, 4, TRUE),
+        (2, 1, 2, 'DIRECCIONES', 5, 8, TRUE)
+    """)
+    
+    # Crear tabla DEFINICION_INSUMOS
+    conn.execute("""
+        CREATE OR REPLACE TABLE DEFINICION_INSUMOS (
+            ID_DEFINICION INTEGER PRIMARY KEY,
+            ID_RANGO INTEGER,
+            INDEX_COL INTEGER,
+            NOMBRE_COLUMN VARCHAR,
+            TIPO_DATO_SYS VARCHAR,
+            ESTATUS BOOLEAN
+        )
+    """)
+    
+    conn.execute("""
+        INSERT INTO DEFINICION_INSUMOS VALUES
+        (1, 1, 0, 'CLIENTE_ID', 'INT', TRUE),
+        (2, 1, 1, 'NOMBRE', 'STRING', TRUE),
+        (3, 1, 2, 'EDAD', 'INT', TRUE),
+        (4, 1, 3, 'EMAIL', 'STRING', TRUE)
+    """)
+    
+    # Crear tabla MOTOR_VAL
+    conn.execute("""
+        CREATE OR REPLACE TABLE MOTOR_VAL (
+            ID_VAL INTEGER PRIMARY KEY,
+            ID_INSUMO INTEGER,
+            TIPO_VAL VARCHAR,
+            VALIDACION VARCHAR,
+            DESCRIPCION VARCHAR,
+            GRUPO VARCHAR,
+            SECCION VARCHAR,
+            BANDERA VARCHAR,
+            CONFIG_JSON VARCHAR,
+            ESTATUS BOOLEAN
+        )
+    """)
+    
+    conn.execute("""
+        INSERT INTO MOTOR_VAL VALUES
+        (1, 1, 'SLA', 'SELECT * FROM datos WHERE EDAD < 0', 
+         'Edad negativa', 'CALIDAD', 'DATOS', 'ROJA', NULL, TRUE),
+        (2, 1, 'SLA', 'SELECT * FROM datos WHERE EMAIL IS NULL', 
+         'Email vacío', 'CALIDAD', 'DATOS', 'AMARILLA', NULL, TRUE)
+    """)
+    
+    # Verificar
+    print("\n✅ Tablas creadas:")
+    for tabla in ['CAT_INSUMOS', 'INSUMOS_PARTES', 'INSUMOS_RANGOS', 
+                  'DEFINICION_INSUMOS', 'MOTOR_VAL']:
+        count = conn.execute(f"SELECT COUNT(*) FROM {tabla}").fetchone()[0]
+        print(f"  {tabla}: {count} registros")
+    
+    conn.close()
+    print(f"\n✅ Base de datos creada: {DB_CONFIG}")
+
+if __name__ == "__main__":
+    crear_base_datos_prueba()
