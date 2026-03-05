@@ -1,0 +1,54 @@
+import duckdb
+import polars as pl
+
+
+class RepositorioConfiguracion:
+
+    def __init__(self, ruta_db):
+        self.conn = duckdb.connect(ruta_db)
+
+    def obtener_insumos_con_validacion(self):
+
+        query = """
+        SELECT DISTINCT ID_INSUMO, TIPO_VAL, FECHA_INICIO
+        FROM MOTOR_VAL
+        WHERE ESTATUS = TRUE
+        """
+
+        return self.conn.execute(query).pl()
+
+    def obtener_configuracion_insumo(self, id_insumo):
+
+        query = f"""
+        SELECT
+            p.ID_PARTE,
+            p.NUM_PARTE,
+            r.ID_RANGO,
+            r.NUM_RANGO,
+            r.COL_INICIO,
+            r.COL_FIN,
+            c.ID_COLUMNA,
+            c.INDEX_COL,
+            c.NOMBRE_COLUMN,
+            c.TIPO_DATO_GRAL
+        FROM INSUMOS_PARTES p
+        JOIN INSUMOS_RANGOS r ON p.ID_PARTE = r.ID_PARTE
+        JOIN DEFINICION_INSUMOS c ON r.ID_RANGO = c.ID_RANGO
+        WHERE p.ID_INSUMO = {id_insumo}
+        AND p.ESTATUS = TRUE
+        AND r.ESTATUS = TRUE
+        AND c.ESTATUS = TRUE
+        """
+
+        return self.conn.execute(query).pl()
+
+    def obtener_validaciones(self, id_insumo):
+
+        query = f"""
+        SELECT *
+        FROM MOTOR_VAL
+        WHERE ID_INSUMO = {id_insumo}
+        AND ESTATUS = TRUE
+        """
+
+        return self.conn.execute(query).pl()
