@@ -1,56 +1,14 @@
-# test_repositorio.py
-from repositorio_configuracion import RepositorioConfiguracion
+# test_validacion.py
+import duckdb
+from repositorio_configuracion_simple import RepositorioConfiguracion
 from config import DB_CONFIG
 
-def test_repositorio():
-    print("="*50)
-    print("PRUEBA DE REPOSITORIO")
-    print("="*50)
-    
-    try:
-        with RepositorioConfiguracion(DB_CONFIG) as repo:
-            print("\n🔍 Probando obtener_insumo(1)...")
-            insumo = repo.obtener_insumo(1)
-            print(f"✅ Resultado: {insumo}")
-            
-    except Exception as e:
-        print(f"\n❌ Error: {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
-
-if __name__ == "__main__":
-    test_repositorio()
-
-
-
-
-
-# test_duckdb_directo.py
-import duckdb
-from config import CSV_CAT_INSUMOS
-
-print("="*50)
-print("PRUEBA DIRECTA CON DUCKDB")
-print("="*50)
-
-# Conectar a una base en memoria
-conn = duckdb.connect()
-
-# Leer el CSV directamente
-print(f"\n📄 Leyendo {CSV_CAT_INSUMOS}...")
-df = conn.execute(f"SELECT * FROM read_csv_auto('{CSV_CAT_INSUMOS}')").fetchdf()
-print(f"✅ Columnas: {df.columns.tolist()}")
-print(f"✅ Registros: {len(df)}")
-print("\nPrimeros 3 registros:")
-print(df.head(3))
-
-# Probar consulta con WHERE
-print("\n🔍 Probando WHERE ID_INSUMO = 1...")
-resultado = conn.execute("""
-    SELECT ID_INSUMO, RUTA_ARCHIVO, TIPO_ARCHIVO 
-    FROM read_csv_auto('{}') 
-    WHERE ID_INSUMO = 1
-""".format(CSV_CAT_INSUMOS)).fetchone()
-print(f"✅ Resultado: {resultado}")
-
-conn.close()
+# Verificar qué validaciones hay para el insumo
+with RepositorioConfiguracion(DB_CONFIG) as repo:
+    validaciones = repo.obtener_validaciones(212)  # tu insumo
+    print(f"Validaciones encontradas: {len(validaciones)}")
+    for v in validaciones:
+        print(f"\nID: {v['id_val']}")
+        print(f"Tipo: {v['tipo_val']}")
+        print(f"Query: {v['validacion']}")
+        print(f"Descripción: {v['descripcion']}")
