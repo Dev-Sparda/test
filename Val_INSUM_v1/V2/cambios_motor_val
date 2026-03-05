@@ -1,0 +1,17 @@
+-- Script para actualizar la tabla MOTOR_VAL
+ALTER TABLE MOTOR_VAL ADD COLUMN TIPO_VAL VARCHAR(20) DEFAULT 'SLA';
+ALTER TABLE MOTOR_VAL ADD COLUMN CONFIG_JSON TEXT;
+
+-- Comentarios
+COMMENT ON COLUMN MOTOR_VAL.TIPO_VAL IS 'Tipo de validación: SLA, CRUCE, CALIDAD, HISTORICO, etc.';
+COMMENT ON COLUMN MOTOR_VAL.CONFIG_JSON IS 'Configuración adicional en JSON para validaciones complejas';
+
+-- Ejemplo de inserción para SLA
+INSERT INTO MOTOR_VAL (ID_INSUMO, TIPO_VAL, VALIDACION, DESCRIPCION, GRUPO, SECCION, BANDERA, ESTATUS)
+VALUES (123, 'SLA', 'SELECT * FROM datos WHERE EDAD < 0', 'Edad negativa', 'CALIDAD', 'VALIDACION', 'ROJA', TRUE);
+
+-- Ejemplo para CRUCE (usando CONFIG_JSON)
+INSERT INTO MOTOR_VAL (ID_INSUMO, TIPO_VAL, VALIDACION, DESCRIPCION, CONFIG_JSON, ESTATUS)
+VALUES (123, 'CRUCE', 'cruce_clientes', 'Clientes no encontrados en maestro', 
+        '{"id_insumo_secundario": 456, "tipo_cruce": "anti", "condiciones": ["principal.CLIENTE_ID = secundario.ID"]}', 
+        TRUE);
