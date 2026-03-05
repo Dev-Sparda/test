@@ -1,55 +1,41 @@
-
-# test_repositorio.py
-from repositorio_configuracion import RepositorioConfiguracion
-from config import DB_CONFIG
-
-def test_repositorio():
-    print("="*50)
-    print("PRUEBA DE REPOSITORIO")
-    print("="*50)
-    
-    try:
-        with RepositorioConfiguracion(DB_CONFIG) as repo:
-            print("\n🔍 Probando obtener_insumo(1)...")
-            insumo = repo.obtener_insumo(1)
-            print(f"✅ Resultado: {insumo}")
-            
-    except Exception as e:
-        print(f"\n❌ Error: {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
-
-if __name__ == "__main__":
-    test_repositorio()
-
-
-
-# test_duckdb_directo.py
+# test_csv_corregido.py
 import duckdb
-from config import CSV_CAT_INSUMOS
 
-print("="*50)
-print("PRUEBA DIRECTA CON DUCKDB")
+print("🔍 Diagnóstico de CSV")
 print("="*50)
 
-# Conectar a una base en memoria
 conn = duckdb.connect()
 
-# Leer el CSV directamente
-print(f"\n📄 Leyendo {CSV_CAT_INSUMOS}...")
-df = conn.execute(f"SELECT * FROM read_csv_auto('{CSV_CAT_INSUMOS}')").fetchdf()
-print(f"✅ Columnas: {df.columns.tolist()}")
-print(f"✅ Registros: {len(df)}")
-print("\nPrimeros 3 registros:")
-print(df.head(3))
+# 1. Ver las primeras líneas del archivo como texto
+with open('cat_insumos.csv', 'r', encoding='utf-8') as f:
+    primeras_lineas = [next(f) for _ in range(3)]
+    print("\n📄 Primeras 3 líneas del archivo:")
+    for i, linea in enumerate(primeras_lineas):
+        print(f"   Línea {i+1}: {linea.rstrip()}")
 
-# Probar consulta con WHERE
-print("\n🔍 Probando WHERE ID_INSUMO = 1...")
-resultado = conn.execute("""
-    SELECT ID_INSUMO, RUTA_ARCHIVO, TIPO_ARCHIVO 
-    FROM read_csv_auto('{}') 
-    WHERE ID_INSUMO = 1
-""".format(CSV_CAT_INSUMOS)).fetchone()
-print(f"✅ Resultado: {resultado}")
+# 2. Probar diferentes separadores
+separadores = [',', ';', '\t', '|']
+print("\n🔍 Probando separadores:")
+
+for sep in separadores:
+    try:
+        resultado = conn.execute(f"""
+            SELECT * FROM read_csv_auto(
+                'cat_insumos.csv',
+                sep='{sep}',
+                header=True,
+                sample_size=1000
+            )
+        """).fetchdf()
+        
+        print(f"\n✅ Separador '{sep}':")
+        print(f"   Columnas: {resultado.columns.tolist()}")
+        print(f"   Shape: {resultado.shape}")
+        if len(resultado.columns) > 1:
+            print("   ¡ESTE PARECE SER EL CORRECTO!")
+            print("\nPrimeros registros:")
+            print(resultado.head(3))
+    except Exception as e:
+        print(f"❌ Separador '{sep}': Error - {e}")
 
 conn.close()
