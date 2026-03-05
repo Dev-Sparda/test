@@ -1,0 +1,18 @@
+from validadores.validador_sla import ValidadorSLA
+
+
+class FabricaValidadores:
+
+    VALIDADORES = {
+        "SLA": ValidadorSLA
+    }
+
+    @classmethod
+    def crear_validador(cls, tipo_val, config, reglas):
+
+        clase = cls.VALIDADORES.get(tipo_val)
+
+        if not clase:
+            raise ValueError(f"No existe validador para {tipo_val}")
+
+        return clase(config, reglas)
