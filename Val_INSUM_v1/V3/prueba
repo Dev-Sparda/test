@@ -1,41 +1,109 @@
-# test_csv_corregido.py
+# diagnostico_final.py
 import duckdb
+import pandas as pd
+from pathlib import Path
 
-print("🔍 Diagnóstico de CSV")
-print("="*50)
+print("="*60)
+print("DIAGNÓSTICO FINAL DE CSV")
+print("="*60)
+
+csv_path = Path("cat_insumos.csv")
+print(f"\n📁 Archivo: {csv_path.absolute()}")
+print(f"📏 Tamaño: {csv_path.stat().st_size} bytes")
+print(f"📝 Existe: {csv_path.exists()}")
+
+if not csv_path.exists():
+    print("❌ El archivo NO existe")
+    exit(1)
+
+# 1. LEER CON PYTHON PURO (sin duckdb)
+print("\n" + "-"*40)
+print("1. LEYENDO CON PYTHON PURO")
+print("-"*40)
+
+try:
+    with open(csv_path, 'r', encoding='utf-8') as f:
+        lineas = f.readlines()
+        print(f"✅ Archivo leído: {len(lineas)} líneas")
+        
+        print("\n📄 Primeras 3 líneas (caracter por caracter):")
+        for i, linea in enumerate(lineas[:3]):
+            print(f"\nLínea {i+1} (longitud {len(linea)}):")
+            print(f"  Texto: {repr(linea)}")  # repr muestra caracteres especiales
+            print(f"  Separada por coma: {linea.strip().split(',')}")
+            
+            # Mostrar cada caracter
+            print("  Caracteres:")
+            for j, c in enumerate(linea[:50]):  # primeras 50 posiciones
+                print(f"    [{j}] '{c}' = {ord(c)}")
+except Exception as e:
+    print(f"❌ Error: {e}")
+
+# 2. LEER CON PANDAS
+print("\n" + "-"*40)
+print("2. LEYENDO CON PANDAS")
+print("-"*40)
+
+try:
+    df = pd.read_csv(csv_path)
+    print(f"✅ Pandas leyó OK")
+    print(f"📊 Shape: {df.shape}")
+    print(f"📋 Columnas: {df.columns.tolist()}")
+    print(f"\n📝 Primeras filas:")
+    print(df.head())
+except Exception as e:
+    print(f"❌ Error con pandas: {e}")
+    print("Tipo de error:", type(e).__name__)
+
+# 3. LEER CON DUCKDB (VERSIÓN SIMPLE)
+print("\n" + "-"*40)
+print("3. LEYENDO CON DUCKDB (simple)")
+print("-"*40)
 
 conn = duckdb.connect()
 
-# 1. Ver las primeras líneas del archivo como texto
-with open('cat_insumos.csv', 'r', encoding='utf-8') as f:
-    primeras_lineas = [next(f) for _ in range(3)]
-    print("\n📄 Primeras 3 líneas del archivo:")
-    for i, linea in enumerate(primeras_lineas):
-        print(f"   Línea {i+1}: {linea.rstrip()}")
-
-# 2. Probar diferentes separadores
-separadores = [',', ';', '\t', '|']
-print("\n🔍 Probando separadores:")
-
-for sep in separadores:
-    try:
-        resultado = conn.execute(f"""
-            SELECT * FROM read_csv_auto(
-                'cat_insumos.csv',
-                sep='{sep}',
-                header=True,
-                sample_size=1000
-            )
-        """).fetchdf()
+try:
+    # Versión más simple posible
+    result = conn.execute(f"""
+        SELECT * FROM read_csv('{csv_path}')
+    """).fetchall()
+    
+    print(f"✅ DuckDB leyó {len(result)} filas")
+    if result:
+        print(f"Primera fila: {result[0]}")
         
-        print(f"\n✅ Separador '{sep}':")
-        print(f"   Columnas: {resultado.columns.tolist()}")
-        print(f"   Shape: {resultado.shape}")
-        if len(resultado.columns) > 1:
-            print("   ¡ESTE PARECE SER EL CORRECTO!")
-            print("\nPrimeros registros:")
-            print(resultado.head(3))
-    except Exception as e:
-        print(f"❌ Separador '{sep}': Error - {e}")
+        # Obtener nombres de columnas
+        desc = conn.execute("DESCRIBE").fetchall()
+        print(f"Columnas: {[d[0] for d in desc]}")
+except Exception as e:
+    print(f"❌ Error: {e}")
+    print("Detalle:", str(e))
+
+# 4. LEER CON DUCKDB (con opciones)
+print("\n" + "-"*40)
+print("4. LEYENDO CON DUCKDB (con opciones)")
+print("-"*40)
+
+try:
+    # Con opciones explícitas
+    result = conn.execute(f"""
+        SELECT * FROM read_csv(
+            '{csv_path}',
+            auto_detect=False,
+            header=True,
+            sep=',',
+            columns={{'ID_INSUMO': 'INTEGER', 'RUTA_ARCHIVO': 'VARCHAR', 'TIPO_ARCHIVO': 'VARCHAR'}}
+        )
+    """).fetchall()
+    
+    print(f"✅ DuckDB leyó {len(result)} filas")
+    print(f"Primeras filas: {result[:3]}")
+except Exception as e:
+    print(f"❌ Error: {e}")
+    print("Detalle:", str(e))
 
 conn.close()
+
+print("\n" + "="*60)
+print("FIN DEL DIAGNÓSTICO")
+print("="*60)
