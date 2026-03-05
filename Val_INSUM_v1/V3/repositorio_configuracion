@@ -1,23 +1,42 @@
+
 # repositorio_configuracion.py
 import duckdb
 import polars as pl
+import pandas as pd
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
 from config import (
-    DB_CAT_INSUMOS, DB_INSUMOS_PARTES, DB_INSUMOS_RANGOS,
+    CSV_CAT_INSUMOS, DB_INSUMOS_PARTES, DB_INSUMOS_RANGOS,
     DB_DEFINICION_INSUMOS, DB_MOTOR_VAL, REPOSITORIO_INSUMOS
 )
 
 
 class RepositorioConfiguracion:
-    """Clase que maneja el acceso a la base de datos de configuración"""
+    """
+    Clase que maneja el acceso a:
+    - CSV: CAT_INSUMOS (catálogo de insumos)
+    - DuckDB: Tablas de configuración de validaciones
+    """
     
     def __init__(self, ruta_db: str):
         self.ruta_db = ruta_db
         self.conn = None
+        
+        # Cargar CAT_INSUMOS desde CSV al iniciar
+        self.cat_insumos = self._cargar_cat_insumos()
+    
+    def _cargar_cat_insumos(self) -> pd.DataFrame:
+        """Carga el catálogo de insumos desde CSV"""
+        if not CSV_CAT_INSUMOS.exists():
+            raise FileNotFoundError(f"Archivo CAT_INSUMOS no encontrado: {CSV_CAT_INSUMOS}")
+        
+        df = pd.read_csv(CSV_CAT_INSUMOS)
+        print(f"✅ CAT_INSUMOS cargado: {len(df)} registros desde {CSV_CAT_INSUMOS}")
+        return df
     
     def __enter__(self):
+        """Conecta a DuckDB para las tablas de validación"""
         self.conn = duckdb.connect(self.ruta_db)
         return self
     
@@ -25,29 +44,40 @@ class RepositorioConfiguracion:
         if self.conn:
             self.conn.close()
     
+    # ============================================
+    # MÉTODOS PARA CAT_INSUMOS (DESDE CSV)
+    # ============================================
+    
     def obtener_insumo(self, id_insumo: int) -> Optional[Tuple]:
         """
-        Obtiene los datos básicos del insumo
+        Obtiene los datos del insumo desde el CSV
         Returns: (ID_INSUMO, RUTA_COMPLETA, TIPO_ARCHIVO)
         """
-        resultado = self.conn.execute(f"""
-            SELECT RUTA_ARCHIVO, TIPO_ARCHIVO
-            FROM {DB_CAT_INSUMOS}
-            WHERE ID_INSUMO = ?
-        """, (id_insumo,)).fetchone()
+        # Buscar en el DataFrame del CSV
+        filtro = self.cat_insumos[self.cat_insumos['ID_INSUMO'] == id_insumo]
         
-        if not resultado:
+        if filtro.empty:
             return None
         
-        ruta_relativa, tipo_archivo = resultado
+        row = filtro.iloc[0]
+        ruta_relativa = row['RUTA_ARCHIVO']
+        tipo_archivo = row['TIPO_ARCHIVO']
         
         # Construir ruta completa dentro del repositorio
         ruta_completa = REPOSITORIO_INSUMOS / ruta_relativa
         
         return (id_insumo, str(ruta_completa), tipo_archivo)
     
+    def obtener_todos_insumos(self) -> List[Dict]:
+        """Obtiene todos los insumos del catálogo"""
+        return self.cat_insumos.to_dict('records')
+    
+    # ============================================
+    # MÉTODOS PARA CONFIGURACIÓN DE VALIDACIONES (DESDE DuckDB)
+    # ============================================
+    
     def obtener_partes(self, id_insumo: int) -> List[Tuple]:
-        """Obtiene todas las partes activas"""
+        """Obtiene todas las partes activas desde DuckDB"""
         return self.conn.execute(f"""
             SELECT ID_PARTE, NUM_PARTE, NOMBRE_PARTE
             FROM {DB_INSUMOS_PARTES}
@@ -91,7 +121,7 @@ class RepositorioConfiguracion:
         return esquema
     
     def obtener_validaciones(self, id_insumo: int) -> List[Dict]:
-        """Obtiene todas las validaciones activas"""
+        """Obtiene todas las validaciones activas desde DuckDB"""
         resultados = self.conn.execute(f"""
             SELECT ID_VAL,
                    TIPO_VAL,
