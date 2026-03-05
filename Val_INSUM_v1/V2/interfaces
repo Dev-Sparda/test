@@ -1,0 +1,130 @@
+# interfaces.py
+# Este archivo define los "contratos" que deben cumplir todos los validadores
+
+from abc import ABC, abstractmethod  # ABC = Abstract Base Class (Clase Base Abstracta)
+from typing import Dict, Any, Optional
+from datetime import datetime
+import polars as pl
+
+
+class Validador(ABC):
+    """
+    Clase base abstracta para todos los validadores.
+    ABC = Abstract Base Class - define métodos que TODOS los validadores deben implementar
+    """
+    
+    @abstractmethod
+    def __enter__(self):
+        """
+        Método especial de Python para usar 'with'
+        Se ejecuta al entrar al bloque 'with'
+        Ejemplo: with ValidadorSLA(...) as v:
+        """
+        pass
+    
+    @abstractmethod
+    def __exit__(self, exc_type, exc_value, traceback):
+        """
+        Método especial de Python para usar 'with'
+        Se ejecuta al salir del bloque 'with' (para limpiar recursos)
+        """
+        pass
+    
+    @abstractmethod
+    def validar(self) -> Dict[str, Any]:
+        """
+        Método principal que TODOS los validadores deben implementar
+        Cada validador hará su propia lógica aquí
+        Returns: Diccionario con resultados
+        """
+        pass
+    
+    @property
+    @abstractmethod
+    def tipo_validador(self) -> str:
+        """
+        Propiedad abstracta - cada validador dice qué tipo es
+        El @property permite acceder como atributo sin paréntesis
+        Ejemplo: validador.tipo_validador (sin llamar como método)
+        """
+        pass
+
+
+class ResultadoValidacion:
+    """
+    Clase que encapsula el resultado de una validación
+    Todas las validaciones usarán esta misma estructura
+    """
+    
+    def __init__(self, 
+                 id_insumo: int,           # ID del insumo principal
+                 id_parte: int,             # ID de la parte procesada
+                 id_rango: int,             # ID del rango procesado
+                 tipo_validacion: str,      # Tipo: 'SLA', 'CRUCE', 'CALIDAD', etc.
+                 metadata: Optional[Dict] = None):  # Metadatos adicionales
+        
+        # Guardamos todos los datos básicos
+        self.id_insumo = id_insumo
+        self.id_parte = id_parte
+        self.id_rango = id_rango
+        self.tipo_validacion = tipo_validacion
+        self.metadata = metadata or {}  # Si no hay metadata, usar diccionario vacío
+        
+        # Fecha/hora actual en formato ISO
+        self.fecha_proceso = datetime.now().isoformat()
+        
+        # Bandera que indica si la estructura del archivo es válida
+        self.estructura_ok = True
+        
+        # Lista donde guardaremos los resultados de CADA validación individual
+        self.validaciones = []
+        
+        # Resumen con conteos
+        self.resumen = {
+            "total_validaciones": 0,      # Cuántas validaciones se ejecutaron
+            "validaciones_con_error": 0,   # Cuántas encontraron errores
+            "total_errores": 0             # Total de registros con error
+        }
+    
+    def to_dict(self) -> Dict:
+        """
+        Convierte el objeto a diccionario (para guardar en JSON)
+        """
+        return {
+            "id_insumo": self.id_insumo,
+            "id_parte": self.id_parte,
+            "id_rango": self.id_rango,
+            "tipo_validacion": self.tipo_validacion,
+            "metadata": self.metadata,
+            "fecha_proceso": self.fecha_proceso,
+            "estructura_ok": self.estructura_ok,
+            "validaciones": self.validaciones,
+            "resumen": self.resumen
+        }
+    
+    def agregar_resultado_validacion(self, 
+                                     id_regla: int,
+                                     descripcion: str,
+                                     total_errores: int,
+                                     muestra: list,
+                                     **kwargs):
+        """
+        Método helper para agregar un resultado de validación
+        **kwargs permite pasar parámetros adicionales específicos de cada tipo
+        """
+        # Actualizar resumen
+        self.resumen["total_validaciones"] += 1
+        if total_errores > 0:
+            self.resumen["validaciones_con_error"] += 1
+            self.resumen["total_errores"] += total_errores
+        
+        # Crear entrada de validación
+        validacion = {
+            "id_regla": id_regla,
+            "descripcion": descripcion,
+            "total_errores": total_errores,
+            "muestra": muestra,
+            **kwargs  # Agregar cualquier parámetro extra
+        }
+        
+        self.validaciones.append(validacion)
