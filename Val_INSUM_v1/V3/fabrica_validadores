@@ -1,0 +1,33 @@
+# fabrica_validadores.py
+from typing import Dict, Type, Any, List
+from interfaces import Validador
+
+
+class FabricaValidadores:
+    """Fábrica que crea validadores según el tipo"""
+    
+    _validadores: Dict[str, Type[Validador]] = {}
+    
+    @classmethod
+    def registrar(cls, tipo: str, validador_class: Type[Validador]):
+        """Registra un nuevo tipo de validador"""
+        cls._validadores[tipo] = validador_class
+        print(f"  → Validador registrado: {tipo}")
+    
+    @classmethod
+    def crear(cls, tipo: str, **kwargs) -> Validador:
+        """Crea una instancia del validador apropiado"""
+        validador_class = cls._validadores.get(tipo)
+        
+        if validador_class is None:
+            tipos_disponibles = list(cls._validadores.keys())
+            raise ValueError(
+                f"Tipo de validador no registrado: '{tipo}'. "
+                f"Disponibles: {tipos_disponibles}"
+            )
+        
+        return validador_class(**kwargs)
+    
+    @classmethod
+    def obtener_tipos_disponibles(cls) -> List[str]:
+        return list(cls._validadores.keys())
