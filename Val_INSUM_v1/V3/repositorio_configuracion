@@ -1,4 +1,4 @@
-# repositorio_configuracion.py (con debugging)
+# repositorio_configuracion_simple.py
 import duckdb
 import polars as pl
 from pathlib import Path
@@ -15,93 +15,164 @@ from config import (
 
 
 class RepositorioConfiguracion:
+    """Versión simplificada - usa tu método de consulta directa"""
     
     def __init__(self, ruta_db: str):
         self.ruta_db = ruta_db
         self.conn = None
     
     def __enter__(self):
-        print(f"🔌 Conectando a DB: {self.ruta_db}")
+        # Conectar a DuckDB
         self.conn = duckdb.connect(self.ruta_db)
         
-        # Registrar CSV
-        if CSV_CAT_INSUMOS.exists():
-            print(f"📄 Leyendo CSV: {CSV_CAT_INSUMOS}")
-            
-            # Verificar que el CSV se puede leer
-            try:
-                # Probar lectura directa
-                test = self.conn.execute(f"""
-                    SELECT * FROM read_csv_auto('{CSV_CAT_INSUMOS}') LIMIT 1
-                """).fetchall()
-                print(f"✅ CSV se lee correctamente. Columnas disponibles en consulta directa")
-                
-                # Crear vista
-                self.conn.execute(f"""
-                    CREATE OR REPLACE VIEW CAT_INSUMOS AS 
-                    SELECT * FROM read_csv_auto('{CSV_CAT_INSUMOS}')
-                """)
-                print(f"✅ Vista CAT_INSUMOS creada")
-                
-                # Verificar que la vista funciona
-                test_vista = self.conn.execute("SELECT * FROM CAT_INSUMOS LIMIT 1").fetchall()
-                print(f"✅ Vista funciona correctamente")
-                
-                # Mostrar estructura de la vista
-                columnas = self.conn.execute("DESCRIBE CAT_INSUMOS").fetchall()
-                print(f"📋 Columnas en vista: {[c[0] for c in columnas]}")
-                
-            except Exception as e:
-                print(f"❌ Error al procesar CSV: {e}")
-                raise
-        else:
-            raise FileNotFoundError(f"Archivo CAT_INSUMOS no encontrado: {CSV_CAT_INSUMOS}")
+        # No crear vista, solo guardar la ruta del CSV
+        self.csv_path = str(CSV_CAT_INSUMOS)
+        print(f"📁 CSV disponible: {self.csv_path}")
         
         return self
     
     def __exit__(self, exc_type, exc_value, traceback):
         if self.conn:
             self.conn.close()
-            print("🔌 Conexión cerrada")
     
     def obtener_insumo(self, id_insumo: int) -> Optional[Tuple]:
-        """Obtiene los datos del insumo desde la vista CAT_INSUMOS"""
-        print(f"🔍 Buscando insumo ID: {id_insumo}")
-        
-        # Primero, verificar qué datos hay en la vista
-        todos = self.conn.execute("SELECT * FROM CAT_INSUMOS").fetchall()
-        print(f"📊 Total registros en CAT_INSUMOS: {len(todos)}")
-        if len(todos) > 0:
-            print(f"   Primer registro: {todos[0]}")
-        
-        # Intentar la consulta específica
+        """Usando TU método - consulta directa al CSV"""
         try:
-            resultado = self.conn.execute("""
-                SELECT ID_INSUMO, RUTA_ARCHIVO, TIPO_ARCHIVO
-                FROM CAT_INSUMOS
-                WHERE ID_INSUMO = ?
-            """, (id_insumo,)).fetchone()
+            # Tal cual como lo hiciste tú
+            resultado = self.conn.execute(f"""
+                SELECT ID_INSUMO, RUTA_ARCHIVO, TIPO_ARCHIVO 
+                FROM '{self.csv_path}' 
+                WHERE ID_INSUMO = {id_insumo}
+            """).fetchone()
             
-            print(f"   Resultado búsqueda: {resultado}")
+            if not resultado:
+                return None
+            
+            id_insumo, ruta_relativa, tipo_archivo = resultado
+            ruta_completa = REPOSITORIO_INSUMOS / ruta_relativa
+            
+            return (id_insumo, str(ruta_completa), tipo_archivo)
             
         except Exception as e:
-            print(f"❌ Error en consulta: {e}")
-            
-            # Intentar sin el WHERE para ver si es problema de la columna
-            try:
-                test = self.conn.execute("SELECT ID_INSUMO FROM CAT_INSUMOS LIMIT 1").fetchone()
-                print(f"   Test columna ID_INSUMO: {test}")
-            except Exception as e2:
-                print(f"   ❌ Error al acceder a ID_INSUMO: {e2}")
-            
-            raise
-        
-        if not resultado:
+            print(f"Error consultando insumo {id_insumo}: {e}")
             return None
-        
-        id_insumo, ruta_relativa, tipo_archivo = resultado
-        ruta_completa = REPOSITORIO_INSUMOS / ruta_relativa
-        
-        return (id_insumo, str(ruta_completa), tipo_archivo)
     
-    # ... resto de métodos igual ...
+    def obtener_todos_insumos(self) -> List[Dict]:
+        """Obtener todos los insumos del CSV"""
+        try:
+            resultados = self.conn.execute(f"""
+                SELECT ID_INSUMO, RUTA_ARCHIVO, TIPO_ARCHIVO 
+                FROM '{self.csv_path}'
+                ORDER BY ID_INSUMO
+            """).fetchall()
+            
+            return [
+                {"id_insumo": r[0], "ruta_archivo": r[1], "tipo_archivo": r[2]}
+                for r in resultados
+            ]
+        except Exception as e:
+            print(f"Error obteniendo todos los insumos: {e}")
+            return []
+    
+    # ============================================
+    # MÉTODOS PARA CONFIGURACIÓN DE VALIDACIONES (TABLAS DUCKDB)
+    # ============================================
+    
+    def obtener_insumos_a_procesar(self) -> List[int]:
+        """Obtiene IDs de insumos DISTINCT desde INSUMOS_PARTES"""
+        resultados = self.conn.execute(f"""
+            SELECT DISTINCT ID_INSUMO 
+            FROM {DB_INSUMOS_PARTES}
+            WHERE ESTATUS = TRUE
+            ORDER BY ID_INSUMO
+        """).fetchall()
+        
+        return [r[0] for r in resultados]
+    
+    def obtener_partes(self, id_insumo: int) -> List[Tuple]:
+        """Obtiene todas las partes activas desde DuckDB"""
+        return self.conn.execute(f"""
+            SELECT ID_PARTE, NUM_PARTE, NOMBRE_PARTE
+            FROM {DB_INSUMOS_PARTES}
+            WHERE ID_INSUMO = ?
+              AND ESTATUS = TRUE
+            ORDER BY NUM_PARTE
+        """, (id_insumo,)).fetchall()
+    
+    def obtener_rangos(self, id_parte: int) -> List[Tuple]:
+        """Obtiene todos los rangos activos de una parte"""
+        return self.conn.execute(f"""
+            SELECT ID_RANGO, NUM_RANGO, NOMBRE_RANGO,
+                   COL_INICIO, COL_FIN
+            FROM {DB_INSUMOS_RANGOS}
+            WHERE ID_PARTE = ?
+              AND ESTATUS = TRUE
+            ORDER BY NUM_RANGO
+        """, (id_parte,)).fetchall()
+    
+    def obtener_definicion_columnas(self, id_rango: int) -> Dict[str, pl.DataType]:
+        """Obtiene la definición de columnas para un rango"""
+        columnas = self.conn.execute(f"""
+            SELECT INDEX_COL, NOMBRE_COLUMN, TIPO_DATO_SYS
+            FROM {DB_DEFINICION_INSUMOS}
+            WHERE ID_RANGO = ?
+              AND ESTATUS = TRUE
+            ORDER BY INDEX_COL
+        """, (id_rango,)).fetchall()
+        
+        mapeo = {
+            "INT": pl.Int64,
+            "STRING": pl.Utf8,
+            "DATE": pl.Utf8,
+            "FLOAT": pl.Float64
+        }
+        
+        esquema = {}
+        for _, nombre, tipo in columnas:
+            esquema[nombre] = mapeo.get(tipo, pl.Utf8)
+        
+        return esquema
+    
+    def obtener_validaciones(self, id_insumo: int) -> List[Dict]:
+        """Obtiene todas las validaciones activas desde DuckDB"""
+        resultados = self.conn.execute(f"""
+            SELECT ID_VAL,
+                   TIPO_VAL,
+                   VALIDACION,
+                   DESCRIPCION,
+                   GRUPO,
+                   SECCION,
+                   BANDERA,
+                   CONFIG_JSON
+            FROM {DB_MOTOR_VAL}
+            WHERE ID_INSUMO = ?
+              AND ESTATUS = TRUE
+        """, (id_insumo,)).fetchall()
+        
+        validaciones = []
+        for row in resultados:
+            validaciones.append({
+                "id_val": row[0],
+                "tipo_val": row[1],
+                "validacion": row[2],
+                "descripcion": row[3],
+                "grupo": row[4],
+                "seccion": row[5],
+                "bandera": row[6],
+                "config_json": row[7]
+            })
+        
+        return validaciones
+    
+    def obtener_validaciones_por_tipo(self, id_insumo: int) -> Dict[str, List[Dict]]:
+        """Obtiene validaciones agrupadas por tipo"""
+        todas = self.obtener_validaciones(id_insumo)
+        
+        por_tipo = {}
+        for val in todas:
+            tipo = val["tipo_val"]
+            if tipo not in por_tipo:
+                por_tipo[tipo] = []
+            por_tipo[tipo].append(val)
+        
+        return por_tipo
