@@ -1,0 +1,33 @@
+from repositorio_configuracion import RepositorioConfiguracion
+from fabrica_validadores import FabricaValidadores
+
+
+class OrquestadorValidaciones:
+
+    def __init__(self, ruta_db):
+
+        self.repo = RepositorioConfiguracion(ruta_db)
+
+    def ejecutar(self):
+
+        insumos = self.repo.obtener_insumos_con_validacion()
+
+        for insumo in insumos.iter_rows(named=True):
+
+            id_insumo = insumo["ID_INSUMO"]
+            tipo_val = insumo["TIPO_VAL"]
+            fecha_inicio = insumo["FECHA_INICIO"]
+
+            print(f"Procesando insumo {id_insumo}")
+
+            config = self.repo.obtener_configuracion_insumo(id_insumo)
+
+            reglas = self.repo.obtener_validaciones(id_insumo)
+
+            validador = FabricaValidadores.crear_validador(
+                tipo_val,
+                config,
+                reglas
+            )
+
+            validador.ejecutar(fecha_inicio)
