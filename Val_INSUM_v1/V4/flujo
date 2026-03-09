@@ -1,0 +1,254 @@
+1. Cambios en la base de datos
+Tabla de validaciones
+Añadir campo PRIORIDAD
+EJEMPLO:
+ID_INSUMO | TIPO_VAL    | PRIORIDAD
+--------- | ----------- | ---------
+10        | SLA         | 1
+10        | FORMATO     | 2
+10        | DUPLICADOS  | 3
+10        | REMEDIADOR  | 4
+
+2. construir una tabla mock de remediaciones con campo ID_INSUMO para excepciones en generacion de csv
+EJEMPLO:
+ID_INSUMO | ACTIVO
+--------- | ------
+10        | 1
+15        | 1
+Esto indica:
+aunque falle SLA → generar CSV para remediación
+
+2. Clase ResultadoValidacion
+class ResultadoValidacion:
+    def __init__(self, aprobado, continuar=True):
+        self.aprobado = aprobado
+        self.continuar = continuar
+Interpretación:
+aprobado=True   -> validación correcta
+continuar=True  -> seguir pipeline
+continuar=False -> detener pipeline
+
+3. Clase GeneradorCSV
+Responsable solo de crear archivos.
+class GeneradorCSV:
+    def generar(self, dataframe, ruta_salida, id_insumo, fecha_rango):
+        nombre = f"{id_insumo}_{fecha_rango}.csv"
+        dataframe.write_csv(
+            ruta_salida + nombre,
+            separator="|"
+        )
+
+
+4. Fábrica de validadores
+Muy parecido a lo que ya tienes.
+class FabricaValidadores:
+    VALIDADORES = {
+        "SLA": ValidadorSLA,
+        "FORMATO": ValidadorFormato,
+        "DUPLICADOS": ValidadorDuplicados
+    }
+    @classmethod
+    def crear_validador(cls, tipo_val, config, regla):
+        clase = cls.VALIDADORES.get(tipo_val)
+        if not clase:
+            raise ValueError(f"No existe validador para {tipo_val}")
+        return clase(config, regla)
+
+
+5. Orquestador (flujo principal)
+Tu código casi queda igual.
+class OrquestadorValidaciones:
+    def __init__(self, ruta_db):
+        self.repo = RepositorioConfiguracion(ruta_db)
+    def ejecutar(self):
+        insumos = self.repo.obtener_insumos_con_validacion()
+        for insumo in insumos.iter_rows(named=True):
+            id_insumo = insumo["ID_INSUMO"]
+            tipo_val = insumo["TIPO_VAL"]
+            fecha_inicio = insumo["FECHA_INICIO"]
+            print(f"Procesando insumo {id_insumo}")
+            config = self.repo.obtener_configuracion_insumo(id_insumo)
+            reglas = self.repo.obtener_validaciones(id_insumo)
+            # reglas ya vienen ordenadas por PRIORIDAD
+            for regla in reglas:
+                validador = FabricaValidadores.crear_validador(
+                    regla["TIPO_VAL"],
+                    config,
+                    regla
+                )
+                resultado = validador.ejecutar(fecha_inicio)
+                if not resultado.continuar:
+                    break
+
+
+6. Validador SLA (flujo principal)
+Aquí se decide:
+validar SLA
+generar CSV
+continuar o detener pipeline
+class ValidadorSLA:
+    def __init__(self, config, regla):
+        self.config = config
+        self.regla = regla
+        self.generador_csv = GeneradorCSV()
+    def ejecutar(self, fecha_inicio):
+        df = self.cargar_archivo()
+        sla_ok = self.validar_sla(df)
+        if sla_ok:
+            self.generador_csv.generar(
+                df,
+                self.config["ruta_salida"],
+                self.config["ID_INSUMO"],
+                fecha_inicio
+            )
+            return ResultadoValidacion(True, True)
+        # revisar si el insumo es remediable
+        if self.es_remediable():
+            self.generador_csv.generar(
+                df,
+                self.config["ruta_salida"],
+                self.config["ID_INSUMO"],
+                fecha_inicio
+            )
+            return ResultadoValidacion(False, True)
+        return ResultadoValidacion(False, False)
+
+
+
+
+ORQUESTADOR
+     │
+     ▼
+obtener insumos
+     │
+     ▼
+obtener validaciones (ORDER BY PRIORIDAD)
+     │
+     ▼
+for validacion
+     │
+     ▼
+FabricaValidadores
+     │
+     ▼
+ValidadorSLA
+     │
+     ├─ SLA OK
+     │      ▼
+     │   generar CSV
+     │      ▼
+     │   continuar pipeline
+     │
+     ├─ SLA FAIL + remediable
+     │      ▼
+     │   generar CSV
+     │      ▼
+     │   continuar pipeline
+     │
+     └─ SLA FAIL
+            ▼
+         detener pipeline
+
+
+
+
+---------------------------------------
+1. De dónde sale es_remediable()
+
+Sería un método dentro de ValidadorSLA que consulta el repositorio.
+
+Ejemplo:
+
+def es_remediable(self):
+
+    id_insumo = self.config["ID_INSUMO"]
+
+    return self.repo.existe_remediacion(id_insumo)
+2. El repositorio hace el SELECT
+
+En tu RepositorioConfiguracion podrías agregar algo así:
+
+def existe_remediacion(self, id_insumo):
+
+    query = """
+    SELECT 1
+    FROM REMISION_REMESAS
+    WHERE ID_INSUMO = ?
+    AND ACTIVO = 1
+    LIMIT 1
+    """
+
+    resultado = self.conn.execute(query, (id_insumo,)).fetchone()
+
+    return resultado is not None
+
+Entonces el flujo sería:
+
+ValidadorSLA
+     │
+     ▼
+es_remediable()
+     │
+     ▼
+RepositorioConfiguracion
+     │
+     ▼
+tabla REMISION_REMESAS
+3. Cómo se usaría dentro del SLA
+sla_ok = self.validar_sla(df)
+
+if sla_ok:
+    generar_csv()
+    return ResultadoValidacion(True, True)
+
+if self.es_remediable():
+    generar_csv()
+    return ResultadoValidacion(False, True)
+
+return ResultadoValidacion(False, False)
+4. Ejemplo en la base
+
+Tabla:
+
+REMISION_REMESAS
+
+Datos:
+
+ID_INSUMO | ACTIVO
+--------- | ------
+10        | 1
+20        | 1
+
+Entonces:
+
+insumo 10 → remediable
+insumo 15 → no remediable
+5. Mejora pequeña (recomendada)
+
+En lugar de hacer un SELECT cada vez, puedes cargar los remediables una vez en el orquestador.
+
+Ejemplo:
+
+ids_remediables = self.repo.obtener_ids_remediables()
+
+y pasarlos al validador.
+
+Luego es_remediable() sería:
+
+def es_remediable(self):
+
+    return self.config["ID_INSUMO"] in self.ids_remediables
+
+Esto evita muchas consultas si tienes muchos insumos.
+
+6. Resumen
+
+es_remediable() es simplemente:
+
+una función que responde:
+
+¿este insumo tiene permiso de remediación?
+
+y su implementación típica es:
+
+SELECT en tabla de excepciones
