@@ -199,3 +199,148 @@ def _validar_reglas_sql(self):
                 "regla": archivo_sql.name,
                 "detalle": resultado.to_dicts()
             })
+
+
+
+##
+
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, List
+import glob
+import config.config as cfg
+
+class PathService:
+    """Servicio para construir rutas concatenando base + fragmento dinámico"""
+    
+    def __init__(self):
+        self.ruta_origen_base = cfg.RUTA_ORIGEN_BASE
+        self.ruta_destino_base = cfg.RUTA_DESTINO_BASE
+        self.patron_fecha = cfg.PATRON_FECHA
+        self.patron_archivo = cfg.PATRON_ARCHIVO
+    
+    def _get_fragmento_fecha(self, fecha: Optional[datetime] = None) -> str:
+        """
+        Construye el fragmento dinámico de la ruta aplicando strftime
+        
+        Args:
+            fecha: Fecha a usar (default: datetime.now())
+        
+        Returns:
+            Fragmento de ruta con fechas aplicadas
+        """
+        if fecha is None:
+            fecha = datetime.now()
+        
+        return fecha.strftime(self.patron_fecha)
+    
+    def _get_nombre_archivo(self, fecha: Optional[datetime] = None) -> str:
+        """
+        Construye el nombre del archivo con patrón de fecha
+        
+        Args:
+            fecha: Fecha a usar (default: datetime.now())
+        
+        Returns:
+            Nombre del archivo con fechas aplicadas
+        """
+        if fecha is None:
+            fecha = datetime.now()
+        
+        return fecha.strftime(self.patron_archivo)
+    
+    def build_origen_path(self, fecha: Optional[datetime] = None) -> Path:
+        """
+        Construye la ruta origen completa: base + fragmento fecha
+        
+        Ejemplo: user/INSUMOS + /2024/202401 = user/INSUMOS/2024/202401
+        
+        Args:
+            fecha: Fecha a usar
+        
+        Returns:
+            Path completo de la ruta origen
+        """
+        fragmento = self._get_fragmento_fecha(fecha)
+        return Path(self.ruta_origen_base) / fragmento
+    
+    def build_destino_path(self, fecha: Optional[datetime] = None) -> Path:
+        """
+        Construye la ruta destino completa: base + fragmento fecha
+        
+        Ejemplo: user/DESTINO_SQLITE + /2024/202401 = user/DESTINO_SQLITE/2024/202401
+        
+        Args:
+            fecha: Fecha a usar
+        
+        Returns:
+            Path completo de la ruta destino
+        """
+        fragmento = self._get_fragmento_fecha(fecha)
+        return Path(self.ruta_destino_base) / fragmento
+    
+    def get_archivos_origen(self, fecha: Optional[datetime] = None) -> List[Path]:
+        """
+        Obtiene la lista de archivos origen que coinciden con el patrón
+        
+        Args:
+            fecha: Fecha a usar para construir la ruta y nombre
+        
+        Returns:
+            Lista de paths de archivos a procesar
+        """
+        ruta_origen = self.build_origen_path(fecha)
+        nombre_archivo = self._get_nombre_archivo(fecha)
+        
+        # Combinar ruta + nombre de archivo
+        pattern_completo = ruta_origen / nombre_archivo
+        
+        # Buscar archivos que coincidan
+        archivos = glob.glob(str(pattern_completo))
+        
+        return [Path(archivo) for archivo in archivos]
+    
+    def get_ruta_sqlite(self, fecha: Optional[datetime] = None) -> Path:
+        """
+        Construye la ruta completa para la base SQLite
+        
+        Args:
+            fecha: Fecha a usar
+        
+        Returns:
+            Path completo para el archivo SQLite
+        """
+        ruta_destino = self.build_destino_path(fecha)
+        
+        # Crear el directorio si no existe
+        ruta_destino.mkdir(parents=True, exist_ok=True)
+        
+        # Nombre de la base SQLite
+        nombre_db = f"datos_{fecha.strftime('%Y%m') if fecha else 'actual'}.db"
+        
+        return ruta_destino / nombre_db
+    
+    def get_info_rutas(self, fecha: Optional[datetime] = None) -> dict:
+        """
+        Obtiene información de todas las rutas para debugging
+        
+        Args:
+            fecha: Fecha a usar
+        
+        Returns:
+            Diccionario con información de rutas
+        """
+        if fecha is None:
+            fecha = datetime.now()
+        
+        return {
+            'fecha': fecha,
+            'ruta_origen_base': self.ruta_origen_base,
+            'ruta_destino_base': self.ruta_destino_base,
+            'fragmento_fecha': self._get_fragmento_fecha(fecha),
+            'ruta_origen_completa': str(self.build_origen_path(fecha)),
+            'ruta_destino_completa': str(self.build_destino_path(fecha)),
+            'nombre_archivo': self._get_nombre_archivo(fecha),
+            'ruta_sqlite': str(self.get_ruta_sqlite(fecha))
+        }
+
