@@ -204,143 +204,202 @@ def _validar_reglas_sql(self):
 
 ##
 
-from datetime import datetime
 from pathlib import Path
-from typing import Optional, List
-import glob
+from datetime import datetime
+from typing import Tuple
 import config.config as cfg
 
-class PathService:
-    """Servicio para construir rutas concatenando base + fragmento dinámico"""
+class RutaService:
+    """
+    Servicio estático para construcción de rutas.
+    Toma fragmentos de ruta, nombre de archivo y fecha para construir rutas completas.
+    """
     
-    def __init__(self):
-        self.ruta_origen_base = cfg.RUTA_ORIGEN_BASE
-        self.ruta_destino_base = cfg.RUTA_DESTINO_BASE
-        self.patron_fecha = cfg.PATRON_FECHA
-        self.patron_archivo = cfg.PATRON_ARCHIVO
-    
-    def _get_fragmento_fecha(self, fecha: Optional[datetime] = None) -> str:
+    @staticmethod
+    def construir_rutas_origen_destino(
+        fragmento_ruta: str,
+        nombre_archivo: str,
+        fecha_str: str
+    ) -> Tuple[Path, Path]:
         """
-        Construye el fragmento dinámico de la ruta aplicando strftime
+        Construye las rutas de origen y destino para un archivo.
         
         Args:
-            fecha: Fecha a usar (default: datetime.now())
+            fragmento_ruta: Fragmento adicional de la ruta (ej: "2024/202401" o "proveedores/activos")
+            nombre_archivo: Nombre del archivo (ej: "insumos_20240115.xxx")
+            fecha_str: Fecha en formato "%Y-%m-%d" (ej: "2024-01-15")
         
         Returns:
-            Fragmento de ruta con fechas aplicadas
-        """
-        if fecha is None:
-            fecha = datetime.now()
+            Tupla (ruta_origen, ruta_destino)
+            - ruta_origen: Path completo para leer el archivo
+            - ruta_destino: Path completo para escribir el archivo procesado
         
-        return fecha.strftime(self.patron_fecha)
-    
-    def _get_nombre_archivo(self, fecha: Optional[datetime] = None) -> str:
+        Examples:
+            >>> RutaService.construir_rutas_origen_destino(
+            ...     "2024/202401",
+            ...     "insumos_20240115.csv",
+            ...     "2024-01-15"
+            ... )
+            (Path('user/INSUMOS/2024/202401/insumos_20240115.csv'), 
+             Path('user/INSUMOS_NORMALIZADOS/2024/202401/insumos_20240115.db'))
         """
-        Construye el nombre del archivo con patrón de fecha
+        # Validar parámetros
+        if not fragmento_ruta or not nombre_archivo:
+            raise ValueError("fragmento_ruta y nombre_archivo son requeridos")
+        
+        # Validar formato de fecha (opcional)
+        try:
+            fecha = datetime.strptime(fecha_str, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"Formato de fecha inválido: {fecha_str}. Debe ser YYYY-MM-DD")
+        
+        # Construir ruta origen: REPOSITORIO_INSUMOS + fragmento + nombre_archivo
+        ruta_origen = Path(cfg.REPOSITORIO_INSUMOS) / fragmento_ruta / nombre_archivo
+        
+        # Determinar extensión de destino según el archivo
+        extension_destino = RutaService._determinar_extension_destino(nombre_archivo)
+        nombre_destino = Path(nombre_archivo).stem + extension_destino
+        
+        # Construir ruta destino: REPOSITORIO_INSUMOS_NORMALIZADOS + fragmento + nombre_destino
+        ruta_destino = Path(cfg.REPOSITORIO_INSUMOS_NORMALIZADOS) / fragmento_ruta / nombre_destino
+        
+        return ruta_origen, ruta_destino
+    
+    @staticmethod
+    def _determinar_extension_destino(nombre_archivo: str) -> str:
+        """
+        Determina la extensión del archivo destino basado en el origen.
+        """
+        # Si el archivo origen es .xxx, el destino puede ser .db para SQLite
+        if nombre_archivo.endswith('.xxx'):
+            return '.db'
+        elif nombre_archivo.endswith('.csv'):
+            return '.db'
+        elif nombre_archivo.endswith('.parquet'):
+            return '.parquet'
+        else:
+            # Por defecto, mantener la misma extensión
+            return Path(nombre_archivo).suffix
+    
+    @staticmethod
+    def construir_ruta_origen(
+        fragmento_ruta: str,
+        nombre_archivo: str,
+        fecha_str: str = None
+    ) -> Path:
+        """
+        Construye solo la ruta de origen.
         
         Args:
-            fecha: Fecha a usar (default: datetime.now())
+            fragmento_ruta: Fragmento adicional de la ruta
+            nombre_archivo: Nombre del archivo
+            fecha_str: Fecha (opcional, solo para validación)
         
         Returns:
-            Nombre del archivo con fechas aplicadas
+            Path completo de origen
         """
-        if fecha is None:
-            fecha = datetime.now()
+        # Validar fecha si se proporciona
+        if fecha_str:
+            try:
+                datetime.strptime(fecha_str, "%Y-%m-%d")
+            except ValueError:
+                raise ValueError(f"Formato de fecha inválido: {fecha_str}")
         
-        return fecha.strftime(self.patron_archivo)
+        return Path(cfg.REPOSITORIO_INSUMOS) / fragmento_ruta / nombre_archivo
     
-    def build_origen_path(self, fecha: Optional[datetime] = None) -> Path:
+    @staticmethod
+    def construir_ruta_destino(
+        fragmento_ruta: str,
+        nombre_archivo: str,
+        fecha_str: str = None
+    ) -> Path:
         """
-        Construye la ruta origen completa: base + fragmento fecha
-        
-        Ejemplo: user/INSUMOS + /2024/202401 = user/INSUMOS/2024/202401
+        Construye solo la ruta de destino (normalizada).
         
         Args:
-            fecha: Fecha a usar
+            fragmento_ruta: Fragmento adicional de la ruta
+            nombre_archivo: Nombre del archivo original
+            fecha_str: Fecha (opcional, solo para validación)
         
         Returns:
-            Path completo de la ruta origen
+            Path completo de destino
         """
-        fragmento = self._get_fragmento_fecha(fecha)
-        return Path(self.ruta_origen_base) / fragmento
-    
-    def build_destino_path(self, fecha: Optional[datetime] = None) -> Path:
-        """
-        Construye la ruta destino completa: base + fragmento fecha
+        # Validar fecha si se proporciona
+        if fecha_str:
+            try:
+                datetime.strptime(fecha_str, "%Y-%m-%d")
+            except ValueError:
+                raise ValueError(f"Formato de fecha inválido: {fecha_str}")
         
-        Ejemplo: user/DESTINO_SQLITE + /2024/202401 = user/DESTINO_SQLITE/2024/202401
+        # Determinar extensión destino
+        extension_destino = RutaService._determinar_extension_destino(nombre_archivo)
+        nombre_destino = Path(nombre_archivo).stem + extension_destino
+        
+        return Path(cfg.REPOSITORIO_INSUMOS_NORMALIZADOS) / fragmento_ruta / nombre_destino
+    
+    @staticmethod
+    def construir_ruta_con_fecha(
+        fragmento_base: str,
+        patron_fecha: str,
+        nombre_base: str,
+        fecha_str: str
+    ) -> Tuple[Path, Path]:
+        """
+        Versión avanzada que aplica strftime a fragmento y nombre.
         
         Args:
-            fecha: Fecha a usar
+            fragmento_base: Base del fragmento con patrones (ej: "%Y/%Y%m")
+            patron_fecha: Patrón para aplicar al fragmento
+            nombre_base: Base del nombre con patrones (ej: "insumos_%Y%m%d.xxx")
+            fecha_str: Fecha en formato "%Y-%m-%d"
         
         Returns:
-            Path completo de la ruta destino
+            Tupla (ruta_origen, ruta_destino)
         """
-        fragmento = self._get_fragmento_fecha(fecha)
-        return Path(self.ruta_destino_base) / fragmento
+        # Convertir fecha string a datetime
+        fecha = datetime.strptime(fecha_str, "%Y-%m-%d")
+        
+        # Aplicar strftime al fragmento y nombre
+        fragmento_ruta = fecha.strftime(fragmento_base)
+        nombre_archivo = fecha.strftime(nombre_base)
+        
+        # Construir rutas
+        return RutaService.construir_rutas_origen_destino(
+            fragmento_ruta,
+            nombre_archivo,
+            fecha_str
+        )
     
-    def get_archivos_origen(self, fecha: Optional[datetime] = None) -> List[Path]:
+    @staticmethod
+    def obtener_info_rutas(
+        fragmento_ruta: str,
+        nombre_archivo: str,
+        fecha_str: str
+    ) -> dict:
         """
-        Obtiene la lista de archivos origen que coinciden con el patrón
+        Devuelve información detallada de las rutas para debugging.
         
         Args:
-            fecha: Fecha a usar para construir la ruta y nombre
-        
-        Returns:
-            Lista de paths de archivos a procesar
-        """
-        ruta_origen = self.build_origen_path(fecha)
-        nombre_archivo = self._get_nombre_archivo(fecha)
-        
-        # Combinar ruta + nombre de archivo
-        pattern_completo = ruta_origen / nombre_archivo
-        
-        # Buscar archivos que coincidan
-        archivos = glob.glob(str(pattern_completo))
-        
-        return [Path(archivo) for archivo in archivos]
-    
-    def get_ruta_sqlite(self, fecha: Optional[datetime] = None) -> Path:
-        """
-        Construye la ruta completa para la base SQLite
-        
-        Args:
-            fecha: Fecha a usar
-        
-        Returns:
-            Path completo para el archivo SQLite
-        """
-        ruta_destino = self.build_destino_path(fecha)
-        
-        # Crear el directorio si no existe
-        ruta_destino.mkdir(parents=True, exist_ok=True)
-        
-        # Nombre de la base SQLite
-        nombre_db = f"datos_{fecha.strftime('%Y%m') if fecha else 'actual'}.db"
-        
-        return ruta_destino / nombre_db
-    
-    def get_info_rutas(self, fecha: Optional[datetime] = None) -> dict:
-        """
-        Obtiene información de todas las rutas para debugging
-        
-        Args:
-            fecha: Fecha a usar
+            fragmento_ruta: Fragmento adicional de la ruta
+            nombre_archivo: Nombre del archivo
+            fecha_str: Fecha en formato "%Y-%m-%d"
         
         Returns:
             Diccionario con información de rutas
         """
-        if fecha is None:
-            fecha = datetime.now()
+        ruta_origen, ruta_destino = RutaService.construir_rutas_origen_destino(
+            fragmento_ruta, nombre_archivo, fecha_str
+        )
         
         return {
-            'fecha': fecha,
-            'ruta_origen_base': self.ruta_origen_base,
-            'ruta_destino_base': self.ruta_destino_base,
-            'fragmento_fecha': self._get_fragmento_fecha(fecha),
-            'ruta_origen_completa': str(self.build_origen_path(fecha)),
-            'ruta_destino_completa': str(self.build_destino_path(fecha)),
-            'nombre_archivo': self._get_nombre_archivo(fecha),
-            'ruta_sqlite': str(self.get_ruta_sqlite(fecha))
+            'fecha': fecha_str,
+            'repositorio_origen': cfg.REPOSITORIO_INSUMOS,
+            'repositorio_destino': cfg.REPOSITORIO_INSUMOS_NORMALIZADOS,
+            'fragmento_ruta': fragmento_ruta,
+            'nombre_archivo_origen': nombre_archivo,
+            'nombre_archivo_destino': ruta_destino.name,
+            'ruta_origen': str(ruta_origen),
+            'ruta_destino': str(ruta_destino),
+            'directorio_origen': str(ruta_origen.parent),
+            'directorio_destino': str(ruta_destino.parent)
         }
-
