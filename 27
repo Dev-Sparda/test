@@ -206,200 +206,304 @@ def _validar_reglas_sql(self):
 
 from pathlib import Path
 from datetime import datetime
-from typing import Tuple
+from typing import Tuple, Optional, List
+import re
 import config.config as cfg
 
 class RutaService:
     """
-    Servicio estático para construcción de rutas.
-    Toma fragmentos de ruta, nombre de archivo y fecha para construir rutas completas.
+    Servicio para construcción y búsqueda de rutas.
+    Busca archivos por nombre base ignorando variantes y extensiones.
     """
+    
+    @staticmethod
+    def buscar_archivo_en_directorio(
+        directorio: Path,
+        nombre_base: str,
+        extensiones_permitidas: List[str] = None
+    ) -> Optional[Path]:
+        """
+        Busca un archivo en el directorio que coincida con el nombre base.
+        Ignora variantes como v1, temporal, etc.
+        
+        Args:
+            directorio: Directorio donde buscar
+            nombre_base: Nombre base del archivo (sin extensión)
+            extensiones_permitidas: Lista de extensiones válidas (ej: ['.xxx', '.csv'])
+        
+        Returns:
+            Path del archivo encontrado o None si no se encuentra
+        
+        Examples:
+            >>> buscar_archivo_en_directorio(
+            ...     Path("user/INSUMOS/2024/202401"),
+            ...     "insumos_20240115"
+            ... )
+            Path('user/INSUMOS/2024/202401/insumos_20240115.xxx')
+            
+            # También encuentra si hay variantes no deseadas
+            >>> buscar_archivo_en_directorio(
+            ...     Path("user/INSUMOS/2024/202401"),
+            ...     "insumos_20240115"
+            ... )
+            # Ignora: insumos_20240115_v1.xxx, insumos_20240115_temporal.xxx
+            # Solo devuelve: insumos_20240115.xxx
+        """
+        if not directorio.exists():
+            return None
+        
+        if extensiones_permitidas is None:
+            extensiones_permitidas = ['.xxx', '.csv', '.parquet', '.json']
+        
+        # Patrón para el nombre base exacto seguido de extensión
+        # Ej: insumos_20240115.xxx -> coincide
+        # Ej: insumos_20240115_v1.xxx -> NO coincide (tiene sufijo extra)
+        patron_base = re.compile(rf"^{re.escape(nombre_base)}\.({'|'.join(e.replace('.', '') for e in extensiones_permitidas)})$", re.IGNORECASE)
+        
+        for archivo in directorio.iterdir():
+            if archivo.is_file() and patron_base.match(archivo.name):
+                return archivo
+        
+        return None
     
     @staticmethod
     def construir_rutas_origen_destino(
         fragmento_ruta: str,
-        nombre_archivo: str,
-        fecha_str: str
+        nombre_base: str,
+        fecha_str: str,
+        extensiones_permitidas: List[str] = None
     ) -> Tuple[Path, Path]:
         """
         Construye las rutas de origen y destino para un archivo.
+        Busca automáticamente el archivo origen con la extensión correcta.
         
         Args:
-            fragmento_ruta: Fragmento adicional de la ruta (ej: "2024/202401" o "proveedores/activos")
-            nombre_archivo: Nombre del archivo (ej: "insumos_20240115.xxx")
-            fecha_str: Fecha en formato "%Y-%m-%d" (ej: "2024-01-15")
+            fragmento_ruta: Fragmento adicional de la ruta (ej: "2024/202401")
+            nombre_base: Nombre base del archivo (sin extensión, ej: "insumos_20240115")
+            fecha_str: Fecha en formato "%Y-%m-%d"
+            extensiones_permitidas: Extensiones válidas para buscar
         
         Returns:
             Tupla (ruta_origen, ruta_destino)
-            - ruta_origen: Path completo para leer el archivo
-            - ruta_destino: Path completo para escribir el archivo procesado
+            - ruta_origen: Path completo del archivo encontrado
+            - ruta_destino: Path destino con extensión .db
+        
+        Raises:
+            FileNotFoundError: Si no se encuentra el archivo origen
+            ValueError: Si los parámetros son inválidos
         
         Examples:
             >>> RutaService.construir_rutas_origen_destino(
             ...     "2024/202401",
-            ...     "insumos_20240115.csv",
+            ...     "insumos_20240115",
             ...     "2024-01-15"
             ... )
-            (Path('user/INSUMOS/2024/202401/insumos_20240115.csv'), 
+            (Path('user/INSUMOS/2024/202401/insumos_20240115.xxx'),
              Path('user/INSUMOS_NORMALIZADOS/2024/202401/insumos_20240115.db'))
         """
         # Validar parámetros
-        if not fragmento_ruta or not nombre_archivo:
-            raise ValueError("fragmento_ruta y nombre_archivo son requeridos")
+        if not fragmento_ruta or not nombre_base:
+            raise ValueError("fragmento_ruta y nombre_base son requeridos")
         
-        # Validar formato de fecha (opcional)
+        # Validar formato de fecha
         try:
             fecha = datetime.strptime(fecha_str, "%Y-%m-%d")
         except ValueError:
             raise ValueError(f"Formato de fecha inválido: {fecha_str}. Debe ser YYYY-MM-DD")
         
-        # Construir ruta origen: REPOSITORIO_INSUMOS + fragmento + nombre_archivo
-        ruta_origen = Path(cfg.REPOSITORIO_INSUMOS) / fragmento_ruta / nombre_archivo
+        # Construir directorio origen
+        directorio_origen = Path(cfg.REPOSITORIO_INSUMOS) / fragmento_ruta
         
-        # Determinar extensión de destino según el archivo
-        extension_destino = RutaService._determinar_extension_destino(nombre_archivo)
-        nombre_destino = Path(nombre_archivo).stem + extension_destino
+        # Buscar archivo origen
+        archivo_origen = RutaService.buscar_archivo_en_directorio(
+            directorio_origen,
+            nombre_base,
+            extensiones_permitidas
+        )
         
-        # Construir ruta destino: REPOSITORIO_INSUMOS_NORMALIZADOS + fragmento + nombre_destino
+        if not archivo_origen:
+            raise FileNotFoundError(
+                f"No se encontró archivo con nombre base '{nombre_base}' "
+                f"en el directorio {directorio_origen}"
+            )
+        
+        # Construir ruta destino
+        nombre_destino = nombre_base + '.db'
         ruta_destino = Path(cfg.REPOSITORIO_INSUMOS_NORMALIZADOS) / fragmento_ruta / nombre_destino
         
-        return ruta_origen, ruta_destino
+        return archivo_origen, ruta_destino
     
     @staticmethod
-    def _determinar_extension_destino(nombre_archivo: str) -> str:
-        """
-        Determina la extensión del archivo destino basado en el origen.
-        """
-        # Si el archivo origen es .xxx, el destino puede ser .db para SQLite
-        if nombre_archivo.endswith('.xxx'):
-            return '.db'
-        elif nombre_archivo.endswith('.csv'):
-            return '.db'
-        elif nombre_archivo.endswith('.parquet'):
-            return '.parquet'
-        else:
-            # Por defecto, mantener la misma extensión
-            return Path(nombre_archivo).suffix
-    
-    @staticmethod
-    def construir_ruta_origen(
-        fragmento_ruta: str,
-        nombre_archivo: str,
-        fecha_str: str = None
-    ) -> Path:
-        """
-        Construye solo la ruta de origen.
-        
-        Args:
-            fragmento_ruta: Fragmento adicional de la ruta
-            nombre_archivo: Nombre del archivo
-            fecha_str: Fecha (opcional, solo para validación)
-        
-        Returns:
-            Path completo de origen
-        """
-        # Validar fecha si se proporciona
-        if fecha_str:
-            try:
-                datetime.strptime(fecha_str, "%Y-%m-%d")
-            except ValueError:
-                raise ValueError(f"Formato de fecha inválido: {fecha_str}")
-        
-        return Path(cfg.REPOSITORIO_INSUMOS) / fragmento_ruta / nombre_archivo
-    
-    @staticmethod
-    def construir_ruta_destino(
-        fragmento_ruta: str,
-        nombre_archivo: str,
-        fecha_str: str = None
-    ) -> Path:
-        """
-        Construye solo la ruta de destino (normalizada).
-        
-        Args:
-            fragmento_ruta: Fragmento adicional de la ruta
-            nombre_archivo: Nombre del archivo original
-            fecha_str: Fecha (opcional, solo para validación)
-        
-        Returns:
-            Path completo de destino
-        """
-        # Validar fecha si se proporciona
-        if fecha_str:
-            try:
-                datetime.strptime(fecha_str, "%Y-%m-%d")
-            except ValueError:
-                raise ValueError(f"Formato de fecha inválido: {fecha_str}")
-        
-        # Determinar extensión destino
-        extension_destino = RutaService._determinar_extension_destino(nombre_archivo)
-        nombre_destino = Path(nombre_archivo).stem + extension_destino
-        
-        return Path(cfg.REPOSITORIO_INSUMOS_NORMALIZADOS) / fragmento_ruta / nombre_destino
-    
-    @staticmethod
-    def construir_ruta_con_fecha(
-        fragmento_base: str,
-        patron_fecha: str,
-        nombre_base: str,
-        fecha_str: str
+    def construir_rutas_con_patron_fecha(
+        fragmento_patron: str,
+        nombre_patron: str,
+        fecha_str: str,
+        extensiones_permitidas: List[str] = None
     ) -> Tuple[Path, Path]:
         """
-        Versión avanzada que aplica strftime a fragmento y nombre.
+        Construye rutas aplicando strftime a los patrones de fecha.
         
         Args:
-            fragmento_base: Base del fragmento con patrones (ej: "%Y/%Y%m")
-            patron_fecha: Patrón para aplicar al fragmento
-            nombre_base: Base del nombre con patrones (ej: "insumos_%Y%m%d.xxx")
+            fragmento_patron: Patrón para fragmento (ej: "%Y/%Y%m")
+            nombre_patron: Patrón para nombre base (ej: "insumos_%Y%m%d")
             fecha_str: Fecha en formato "%Y-%m-%d"
+            extensiones_permitidas: Extensiones válidas para buscar
         
         Returns:
             Tupla (ruta_origen, ruta_destino)
         """
-        # Convertir fecha string a datetime
         fecha = datetime.strptime(fecha_str, "%Y-%m-%d")
         
-        # Aplicar strftime al fragmento y nombre
-        fragmento_ruta = fecha.strftime(fragmento_base)
-        nombre_archivo = fecha.strftime(nombre_base)
+        fragmento_ruta = fecha.strftime(fragmento_patron)
+        nombre_base = fecha.strftime(nombre_patron)
         
-        # Construir rutas
         return RutaService.construir_rutas_origen_destino(
             fragmento_ruta,
-            nombre_archivo,
-            fecha_str
+            nombre_base,
+            fecha_str,
+            extensiones_permitidas
         )
+    
+    @staticmethod
+    def listar_archivos_coincidentes(
+        fragmento_ruta: str,
+        nombre_base: str,
+        extensiones_permitidas: List[str] = None
+    ) -> List[Path]:
+        """
+        Lista todos los archivos que coinciden parcialmente con el nombre base.
+        Útil para debug y ver qué variantes existen.
+        
+        Args:
+            fragmento_ruta: Fragmento de ruta
+            nombre_base: Nombre base a buscar
+            extensiones_permitidas: Extensiones válidas
+        
+        Returns:
+            Lista de paths de archivos que coinciden parcialmente
+        """
+        directorio = Path(cfg.REPOSITORIO_INSUMOS) / fragmento_ruta
+        
+        if not directorio.exists():
+            return []
+        
+        if extensiones_permitidas is None:
+            extensiones_permitidas = ['.xxx', '.csv', '.parquet', '.json']
+        
+        # Buscar archivos que contengan el nombre_base (coincidencia parcial)
+        archivos = []
+        for archivo in directorio.iterdir():
+            if archivo.is_file():
+                # Verificar si el nombre contiene el nombre_base
+                if nombre_base in archivo.stem:
+                    # Verificar extensión permitida
+                    if archivo.suffix.lower() in extensiones_permitidas:
+                        archivos.append(archivo)
+        
+        return archivos
     
     @staticmethod
     def obtener_info_rutas(
         fragmento_ruta: str,
-        nombre_archivo: str,
+        nombre_base: str,
         fecha_str: str
     ) -> dict:
         """
         Devuelve información detallada de las rutas para debugging.
         
         Args:
-            fragmento_ruta: Fragmento adicional de la ruta
-            nombre_archivo: Nombre del archivo
+            fragmento_ruta: Fragmento de ruta
+            nombre_base: Nombre base del archivo
             fecha_str: Fecha en formato "%Y-%m-%d"
         
         Returns:
             Diccionario con información de rutas
         """
-        ruta_origen, ruta_destino = RutaService.construir_rutas_origen_destino(
-            fragmento_ruta, nombre_archivo, fecha_str
-        )
+        try:
+            ruta_origen, ruta_destino = RutaService.construir_rutas_origen_destino(
+                fragmento_ruta, nombre_base, fecha_str
+            )
+            encontrado = True
+            error = None
+        except FileNotFoundError as e:
+            ruta_origen = None
+            ruta_destino = None
+            encontrado = False
+            error = str(e)
+        
+        directorio_origen = Path(cfg.REPOSITORIO_INSUMOS) / fragmento_ruta
         
         return {
             'fecha': fecha_str,
             'repositorio_origen': cfg.REPOSITORIO_INSUMOS,
             'repositorio_destino': cfg.REPOSITORIO_INSUMOS_NORMALIZADOS,
             'fragmento_ruta': fragmento_ruta,
-            'nombre_archivo_origen': nombre_archivo,
-            'nombre_archivo_destino': ruta_destino.name,
-            'ruta_origen': str(ruta_origen),
-            'ruta_destino': str(ruta_destino),
-            'directorio_origen': str(ruta_origen.parent),
-            'directorio_destino': str(ruta_destino.parent)
+            'nombre_base': nombre_base,
+            'directorio_busqueda': str(directorio_origen),
+            'archivo_encontrado': encontrado,
+            'ruta_origen': str(ruta_origen) if ruta_origen else None,
+            'ruta_destino': str(ruta_destino) if ruta_destino else None,
+            'error': error,
+            'archivos_cercanos': [
+                str(a) for a in RutaService.listar_archivos_coincidentes(
+                    fragmento_ruta, nombre_base
+                )
+            ]
         }
+    
+    @staticmethod
+    def construir_ruta_destino_desde_origen(
+        ruta_origen: Path
+    ) -> Path:
+        """
+        Construye la ruta destino a partir de una ruta origen existente.
+        Útil cuando ya tienes el archivo origen.
+        
+        Args:
+            ruta_origen: Path del archivo origen
+        
+        Returns:
+            Path destino con extensión .db
+        """
+        # Obtener el nombre base (sin extensión)
+        nombre_base = ruta_origen.stem
+        
+        # Obtener el fragmento de ruta relativo al repositorio
+        try:
+            fragmento_relativo = ruta_origen.parent.relative_to(cfg.REPOSITORIO_INSUMOS)
+        except ValueError:
+            # Si no es relativo, usar el directorio padre
+            fragmento_relativo = ruta_origen.parent
+        
+        # Construir destino
+        nombre_destino = nombre_base + '.db'
+        ruta_destino = Path(cfg.REPOSITORIO_INSUMOS_NORMALIZADOS) / fragmento_relativo / nombre_destino
+        
+        return ruta_destino
+
+# Para pruebas
+if __name__ == "__main__":
+    print("=== Prueba de RutaService ===\n")
+    
+    # Probar búsqueda de archivo
+    try:
+        origen, destino = RutaService.construir_rutas_origen_destino(
+            "2024/202401",
+            "insumos_20240115",
+            "2024-01-15"
+        )
+        print(f"✅ Archivo encontrado:")
+        print(f"   Origen: {origen}")
+        print(f"   Destino: {destino}")
+    except FileNotFoundError as e:
+        print(f"❌ Error: {e}")
+    
+    # Mostrar info detallada
+    print("\n=== Información detallada ===")
+    info = RutaService.obtener_info_rutas(
+        "2024/202401",
+        "insumos_20240115",
+        "2024-01-15"
+    )
+    for key, value in info.items():
+        print(f"   {key}: {value}")
