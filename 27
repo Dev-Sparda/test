@@ -213,8 +213,27 @@ import config.config as cfg
 class RutaService:
     """
     Servicio para construcción y búsqueda de rutas.
-    Busca archivos por nombre base ignorando variantes y extensiones.
+    Aplica strftime a los patrones de fecha y busca archivos por nombre base.
     """
+    
+    # Extensiones permitidas por defecto
+    EXTENSIONES_DEFAULT = ['.xxx', '.csv', '.parquet', '.json', '.xlsx']
+    
+    @staticmethod
+    def _aplicar_strftime(patron: str, fecha: datetime) -> str:
+        """
+        Aplica strftime a un patrón, manejando caracteres especiales.
+        
+        Args:
+            patron: Patrón con formatos de fecha (ej: "%Y/%Y%m")
+            fecha: Objeto datetime
+        
+        Returns:
+            String con el patrón resuelto
+        """
+        if not patron:
+            return ""
+        return fecha.strftime(patron)
     
     @staticmethod
     def buscar_archivo_en_directorio(
@@ -223,42 +242,28 @@ class RutaService:
         extensiones_permitidas: List[str] = None
     ) -> Optional[Path]:
         """
-        Busca un archivo en el directorio que coincida con el nombre base.
+        Busca un archivo en el directorio que coincida exactamente con el nombre base.
         Ignora variantes como v1, temporal, etc.
         
         Args:
             directorio: Directorio donde buscar
             nombre_base: Nombre base del archivo (sin extensión)
-            extensiones_permitidas: Lista de extensiones válidas (ej: ['.xxx', '.csv'])
+            extensiones_permitidas: Lista de extensiones válidas
         
         Returns:
-            Path del archivo encontrado o None si no se encuentra
-        
-        Examples:
-            >>> buscar_archivo_en_directorio(
-            ...     Path("user/INSUMOS/2024/202401"),
-            ...     "insumos_20240115"
-            ... )
-            Path('user/INSUMOS/2024/202401/insumos_20240115.xxx')
-            
-            # También encuentra si hay variantes no deseadas
-            >>> buscar_archivo_en_directorio(
-            ...     Path("user/INSUMOS/2024/202401"),
-            ...     "insumos_20240115"
-            ... )
-            # Ignora: insumos_20240115_v1.xxx, insumos_20240115_temporal.xxx
-            # Solo devuelve: insumos_20240115.xxx
+            Path del archivo encontrado o None
         """
         if not directorio.exists():
             return None
         
         if extensiones_permitidas is None:
-            extensiones_permitidas = ['.xxx', '.csv', '.parquet', '.json']
+            extensiones_permitidas = RutaService.EXTENSIONES_DEFAULT
         
-        # Patrón para el nombre base exacto seguido de extensión
+        # Patrón para nombre base exacto seguido de extensión
         # Ej: insumos_20240115.xxx -> coincide
-        # Ej: insumos_20240115_v1.xxx -> NO coincide (tiene sufijo extra)
-        patron_base = re.compile(rf"^{re.escape(nombre_base)}\.({'|'.join(e.replace('.', '') for e in extensiones_permitidas)})$", re.IGNORECASE)
+        # Ej: insumos_20240115_v1.xxx -> NO coincide
+        extensiones_regex = '|'.join(e.replace('.', '') for e in extensiones_permitidas)
+        patron_base = re.compile(rf"^{re.escape(nombre_base)}\.({extensiones_regex})$", re.IGNORECASE)
         
         for archivo in directorio.iterdir():
             if archivo.is_file() and patron_base.match(archivo.name):
@@ -268,18 +273,18 @@ class RutaService:
     
     @staticmethod
     def construir_rutas_origen_destino(
-        fragmento_ruta: str,
-        nombre_base: str,
+        fragmento_patron: str,
+        nombre_patron: str,
         fecha_str: str,
         extensiones_permitidas: List[str] = None
     ) -> Tuple[Path, Path]:
         """
-        Construye las rutas de origen y destino para un archivo.
+        Construye las rutas de origen y destino aplicando strftime a los patrones.
         Busca automáticamente el archivo origen con la extensión correcta.
         
         Args:
-            fragmento_ruta: Fragmento adicional de la ruta (ej: "2024/202401")
-            nombre_base: Nombre base del archivo (sin extensión, ej: "insumos_20240115")
+            fragmento_patron: Patrón para el fragmento de ruta (ej: "%Y/%Y%m")
+            nombre_patron: Patrón para el nombre base (ej: "insumos_%Y%m%d")
             fecha_str: Fecha en formato "%Y-%m-%d"
             extensiones_permitidas: Extensiones válidas para buscar
         
@@ -291,25 +296,78 @@ class RutaService:
         Raises:
             FileNotFoundError: Si no se encuentra el archivo origen
             ValueError: Si los parámetros son inválidos
-        
-        Examples:
-            >>> RutaService.construir_rutas_origen_destino(
-            ...     "2024/202401",
-            ...     "insumos_20240115",
-            ...     "2024-01-15"
-            ... )
-            (Path('user/INSUMOS/2024/202401/insumos_20240115.xxx'),
-             Path('user/INSUMOS_NORMALIZADOS/2024/202401/insumos_20240115.db'))
         """
         # Validar parámetros
-        if not fragmento_ruta or not nombre_base:
-            raise ValueError("fragmento_ruta y nombre_base son requeridos")
+        if not fragmento_patron or not nombre_patron:
+            raise ValueError("fragmento_patron y nombre_patron son requeridos")
         
-        # Validar formato de fecha
+        # Convertir fecha string a datetime
         try:
             fecha = datetime.strptime(fecha_str, "%Y-%m-%d")
         except ValueError:
             raise ValueError(f"Formato de fecha inválido: {fecha_str}. Debe ser YYYY-MM-DD")
+        
+        # Aplicar strftime a los patrones
+        fragmento_ruta = RutaService._aplicar_strftime(fragmento_patron, fecha)
+        nombre_base = RutaService._aplicar_strftime(nombre_patron, fecha)
+        
+        # Construir directorio origen
+        directorio_origen = Path(cfg.REPOSITORIO_INSUMOS) / fragmento_ruta
+        
+        # Buscar archivo origen
+        archivo_origen = RutaService.buscar_archivo_en_directorio(
+            directorio_origen,
+            nombre_base,
+            extensiones_permitidas
+        )
+        
+        if not archivo_origen:
+            # Listar archivos cercanos para ayudar a debug
+            archivos_cercanos = RutaService.listar_archivos_coincidentes(
+                fragmento_ruta, nombre_base, extensiones_permitidas
+            )
+            mensaje = (
+                f"No se encontró archivo con nombre base '{nombre_base}' "
+                f"en el directorio {directorio_origen}"
+            )
+            if archivos_cercanos:
+                mensaje += f"\nArchivos similares encontrados: {[a.name for a in archivos_cercanos]}"
+            raise FileNotFoundError(mensaje)
+        
+        # Construir ruta destino
+        nombre_destino = nombre_base + '.db'
+        ruta_destino = Path(cfg.REPOSITORIO_INSUMOS_NORMALIZADOS) / fragmento_ruta / nombre_destino
+        
+        return archivo_origen, ruta_destino
+    
+    @staticmethod
+    def construir_rutas_con_fecha_directa(
+        fragmento_ruta: str,
+        nombre_base: str,
+        fecha_str: str,
+        extensiones_permitidas: List[str] = None
+    ) -> Tuple[Path, Path]:
+        """
+        Versión que recibe el fragmento y nombre ya resueltos (sin strftime).
+        Útil cuando ya tienes la ruta y nombre calculados.
+        
+        Args:
+            fragmento_ruta: Fragmento de ruta ya resuelto (ej: "2024/202401")
+            nombre_base: Nombre base ya resuelto (ej: "insumos_20240115")
+            fecha_str: Fecha en formato "%Y-%m-%d" (para validación)
+            extensiones_permitidas: Extensiones válidas para buscar
+        
+        Returns:
+            Tupla (ruta_origen, ruta_destino)
+        """
+        # Validar fecha
+        try:
+            datetime.strptime(fecha_str, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"Formato de fecha inválido: {fecha_str}")
+        
+        if not fragmento_ruta or not nombre_base:
+            raise ValueError("fragmento_ruta y nombre_base son requeridos")
         
         # Construir directorio origen
         directorio_origen = Path(cfg.REPOSITORIO_INSUMOS) / fragmento_ruta
@@ -334,37 +392,6 @@ class RutaService:
         return archivo_origen, ruta_destino
     
     @staticmethod
-    def construir_rutas_con_patron_fecha(
-        fragmento_patron: str,
-        nombre_patron: str,
-        fecha_str: str,
-        extensiones_permitidas: List[str] = None
-    ) -> Tuple[Path, Path]:
-        """
-        Construye rutas aplicando strftime a los patrones de fecha.
-        
-        Args:
-            fragmento_patron: Patrón para fragmento (ej: "%Y/%Y%m")
-            nombre_patron: Patrón para nombre base (ej: "insumos_%Y%m%d")
-            fecha_str: Fecha en formato "%Y-%m-%d"
-            extensiones_permitidas: Extensiones válidas para buscar
-        
-        Returns:
-            Tupla (ruta_origen, ruta_destino)
-        """
-        fecha = datetime.strptime(fecha_str, "%Y-%m-%d")
-        
-        fragmento_ruta = fecha.strftime(fragmento_patron)
-        nombre_base = fecha.strftime(nombre_patron)
-        
-        return RutaService.construir_rutas_origen_destino(
-            fragmento_ruta,
-            nombre_base,
-            fecha_str,
-            extensiones_permitidas
-        )
-    
-    @staticmethod
     def listar_archivos_coincidentes(
         fragmento_ruta: str,
         nombre_base: str,
@@ -375,7 +402,7 @@ class RutaService:
         Útil para debug y ver qué variantes existen.
         
         Args:
-            fragmento_ruta: Fragmento de ruta
+            fragmento_ruta: Fragmento de ruta (ya resuelto)
             nombre_base: Nombre base a buscar
             extensiones_permitidas: Extensiones válidas
         
@@ -388,9 +415,8 @@ class RutaService:
             return []
         
         if extensiones_permitidas is None:
-            extensiones_permitidas = ['.xxx', '.csv', '.parquet', '.json']
+            extensiones_permitidas = RutaService.EXTENSIONES_DEFAULT
         
-        # Buscar archivos que contengan el nombre_base (coincidencia parcial)
         archivos = []
         for archivo in directorio.iterdir():
             if archivo.is_file():
@@ -404,51 +430,61 @@ class RutaService:
     
     @staticmethod
     def obtener_info_rutas(
-        fragmento_ruta: str,
-        nombre_base: str,
+        fragmento_patron: str,
+        nombre_patron: str,
         fecha_str: str
     ) -> dict:
         """
         Devuelve información detallada de las rutas para debugging.
+        Aplica strftime automáticamente.
         
         Args:
-            fragmento_ruta: Fragmento de ruta
-            nombre_base: Nombre base del archivo
+            fragmento_patron: Patrón para fragmento (ej: "%Y/%Y%m")
+            nombre_patron: Patrón para nombre base (ej: "insumos_%Y%m%d")
             fecha_str: Fecha en formato "%Y-%m-%d"
         
         Returns:
             Diccionario con información de rutas
         """
         try:
-            ruta_origen, ruta_destino = RutaService.construir_rutas_origen_destino(
-                fragmento_ruta, nombre_base, fecha_str
+            fecha = datetime.strptime(fecha_str, "%Y-%m-%d")
+            fragmento_resuelto = RutaService._aplicar_strftime(fragmento_patron, fecha)
+            nombre_resuelto = RutaService._aplicar_strftime(nombre_patron, fecha)
+            
+            ruta_origen, ruta_destino = RutaService.construir_rutas_con_fecha_directa(
+                fragmento_resuelto, nombre_resuelto, fecha_str
             )
             encontrado = True
             error = None
-        except FileNotFoundError as e:
+        except (FileNotFoundError, ValueError) as e:
             ruta_origen = None
             ruta_destino = None
             encontrado = False
             error = str(e)
+            fragmento_resuelto = RutaService._aplicar_strftime(fragmento_patron, fecha) if 'fecha' in locals() else fragmento_patron
+            nombre_resuelto = RutaService._aplicar_strftime(nombre_patron, fecha) if 'fecha' in locals() else nombre_patron
         
-        directorio_origen = Path(cfg.REPOSITORIO_INSUMOS) / fragmento_ruta
+        directorio_origen = Path(cfg.REPOSITORIO_INSUMOS) / fragmento_resuelto if fragmento_resuelto else None
         
         return {
             'fecha': fecha_str,
+            'fecha_parseada': fecha_str,
             'repositorio_origen': cfg.REPOSITORIO_INSUMOS,
             'repositorio_destino': cfg.REPOSITORIO_INSUMOS_NORMALIZADOS,
-            'fragmento_ruta': fragmento_ruta,
-            'nombre_base': nombre_base,
-            'directorio_busqueda': str(directorio_origen),
+            'fragmento_patron': fragmento_patron,
+            'fragmento_resuelto': fragmento_resuelto,
+            'nombre_patron': nombre_patron,
+            'nombre_resuelto': nombre_resuelto,
+            'directorio_busqueda': str(directorio_origen) if directorio_origen else None,
             'archivo_encontrado': encontrado,
             'ruta_origen': str(ruta_origen) if ruta_origen else None,
             'ruta_destino': str(ruta_destino) if ruta_destino else None,
             'error': error,
             'archivos_cercanos': [
                 str(a) for a in RutaService.listar_archivos_coincidentes(
-                    fragmento_ruta, nombre_base
+                    fragmento_resuelto, nombre_resuelto
                 )
-            ]
+            ] if fragmento_resuelto and nombre_resuelto else []
         }
     
     @staticmethod
@@ -481,18 +517,32 @@ class RutaService:
         
         return ruta_destino
 
+
 # Para pruebas
 if __name__ == "__main__":
-    print("=== Prueba de RutaService ===\n")
+    print("=== Prueba de RutaService con strftime ===\n")
     
-    # Probar búsqueda de archivo
+    # Configuración de prueba
+    fragmento_patron = "%Y/%Y%m"
+    nombre_patron = "insumos_%Y%m%d"
+    fecha = "2024-01-15"
+    
+    print(f"Patrones:")
+    print(f"  Fragmento: {fragmento_patron}")
+    print(f"  Nombre: {nombre_patron}")
+    print(f"  Fecha: {fecha}")
+    print()
+    
+    # Probar construcción con strftime
     try:
         origen, destino = RutaService.construir_rutas_origen_destino(
-            "2024/202401",
-            "insumos_20240115",
-            "2024-01-15"
+            fragmento_patron,
+            nombre_patron,
+            fecha
         )
         print(f"✅ Archivo encontrado:")
+        print(f"   Fragmento resuelto: {origen.parent}")
+        print(f"   Nombre base: {origen.stem}")
         print(f"   Origen: {origen}")
         print(f"   Destino: {destino}")
     except FileNotFoundError as e:
@@ -501,9 +551,10 @@ if __name__ == "__main__":
     # Mostrar info detallada
     print("\n=== Información detallada ===")
     info = RutaService.obtener_info_rutas(
-        "2024/202401",
-        "insumos_20240115",
-        "2024-01-15"
+        fragmento_patron,
+        nombre_patron,
+        fecha
     )
     for key, value in info.items():
-        print(f"   {key}: {value}")
+        if key not in ['archivos_cercanos'] or value:
+            print(f"   {key}: {value}")
