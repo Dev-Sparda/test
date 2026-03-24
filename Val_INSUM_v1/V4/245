@@ -146,4 +146,15 @@ class NormalizadorInsumo:
         return df_temp.reset_index(drop=True)
 
 
+
+#----------uso-----------
+repo = RepoCrearBase(ruta_db, df_config, DBManager)
+repo.crear_tablas()
+
+norm = NormalizadorInsumo(df_config, ruta_archivo, tipo_archivo)
+rangos = norm.procesar_archivo()
+
+for nombre, df in rangos.items():
+    repo.cargar_df(df, nombre)
+
       
