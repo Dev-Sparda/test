@@ -1,0 +1,149 @@
+import pandas as pd
+from pathlib import Path
+
+class RepoCrearBase:
+    """
+    Repositorio encargado de:
+    - Crear todas las tablas de la base según df_config
+    - Cargar DataFrames a las tablas
+    """
+
+    def __init__(self, ruta_db: Path, df_config: pd.DataFrame, db_manager_cls):
+        """
+        :param ruta_db: Path hacia la base SQLite
+        :param df_config: DataFrame de configuración del insumo
+        :param db_manager_cls: clase DBManager (ya implementada)
+        """
+        self.ruta_db = ruta_db
+        self.df_config = df_config
+        self.db_manager_cls = db_manager_cls
+
+    # ----------------------------------------------------------
+    # 1. CREAR TABLAS SEGÚN CONFIGURACIÓN
+    # ----------------------------------------------------------
+    def crear_tablas(self):
+        """
+        Crea todas las tablas (una por cada NOMBRE_RANGO).
+        Cada tabla usa columnas, tipos y PK según df_config.
+        """
+        # Agrupar por cada rango (cada rango es una tabla)
+        for nombre_rango, df_rango in self.df_config.groupby("NOMBRE_RANGO"):
+            columnas_sql = []
+
+            for _, row in df_rango.iterrows():
+                col_name = row["NOMBRE_COLUMN"]
+                col_type = row["TIPO_DATO_SYS"]   # TEXT, REAL, DATE, etc.
+                is_pk = row["KEY_COLUMN"] == 1
+
+                if is_pk:
+                    columnas_sql.append(f"{col_name} {col_type} PRIMARY KEY")
+                else:
+                    columnas_sql.append(f"{col_name} {col_type}")
+
+            columnas_join = ", ".join(columnas_sql)
+            query = f"CREATE TABLE IF NOT EXISTS {nombre_rango} ({columnas_join});"
+
+            # Ejecutar query usando DBManager
+            with self.db_manager_cls(self.ruta_db) as db:
+                db.ejecutar_dml(query)
+
+    # ----------------------------------------------------------
+    # 2. CARGA DE DATAFRAME A TABLA
+    # ----------------------------------------------------------
+    def cargar_df(self, df: pd.DataFrame, nombre_tabla: str):
+        """
+        Inserta un DataFrame a una tabla ya creada.
+        """
+        with self.db_manager_cls(self.ruta_db) as db:
+            db.cargar_df_tabla(df, nombre_tabla)
+
+
+
+#--------------------
+
+import pandas as pd
+
+class NormalizadorInsumo:
+    """
+    Lee un archivo (xlsx, csv, txt, html) y lo separa en los rangos configurados.
+    Devuelve un dict {nombre_rango: df}
+    """
+
+    def __init__(self, df_config: pd.DataFrame, ruta_archivo: str, tipo_archivo: str):
+        self.df_config = df_config
+        self.ruta_archivo = ruta_archivo
+        self.tipo_archivo = tipo_archivo.lower()
+
+    # ----------------------------------------------------------
+    # Función principal
+    # ----------------------------------------------------------
+    def procesar_archivo(self) -> dict:
+        """
+        Procesa el archivo y produce un DF por cada rango configurado.
+
+        :return: dict {"NOMBRE_RANGO": DataFrame}
+        """
+        resultados = {}
+
+        # Agrupar por parte (hojas para excel)
+        for id_parte, df_parte in self.df_config.groupby("ID_PARTE"):
+
+            nombre_parte = df_parte["NOMBRE_PARTE"].iloc[0]  # hoja excel (si aplica)
+            
+            # Cargar el archivo dependiendo del tipo
+            df_archivo = self._leer_archivo(nombre_parte)
+
+            # Ahora procesamos cada rango de la parte
+            for nombre_rango, df_rango in df_parte.groupby("NOMBRE_RANGO"):
+                df_procesado = self._procesar_rango(df_archivo, df_rango)
+                resultados[nombre_rango] = df_procesado
+
+        return resultados
+
+    # ----------------------------------------------------------
+    # Lectura del archivo según tipo
+    # ----------------------------------------------------------
+    def _leer_archivo(self, nombre_parte):
+        """
+        Lee el archivo COMPLETO de esa parte/hoja.
+        """
+        if self.tipo_archivo == "xlsx":
+            return pd.read_excel(self.ruta_archivo, sheet_name=nombre_parte, header=None)
+
+        elif self.tipo_archivo == "csv":
+            return pd.read_csv(self.ruta_archivo, header=None)
+
+        elif self.tipo_archivo == "txt":
+            return pd.read_csv(self.ruta_archivo, header=None, sep=None, engine="python")
+
+        elif self.tipo_archivo == "html":
+            return pd.read_html(self.ruta_archivo, header=None)[0]
+
+        else:
+            raise ValueError(f"Tipo de archivo no soportado: {self.tipo_archivo}")
+
+    # ----------------------------------------------------------
+    # Procesamiento del rango según config
+    # ----------------------------------------------------------
+    def _procesar_rango(self, df_archivo: pd.DataFrame, df_rango):
+        """
+        Recorta filas/columnas y asigna nombres correctos.
+        """
+        fila_ini = df_rango["FILA_INICIO"].iloc[0]
+        col_ini = df_rango["COL_INICIO"].iloc[0]
+        col_fin = df_rango["COL_FIN"].iloc[0]
+
+        # Recortar filas
+        df_temp = df_archivo.iloc[fila_ini:, :]
+
+        # Recortar columnas (col_ini a col_fin incluido)
+        df_temp = df_temp.iloc[:, col_ini:col_fin + 1]
+
+        # Asignar nombres de columnas
+        nuevas_cols = list(df_rango.sort_values("INDEX_COL")["NOMBRE_COLUMN"])
+        df_temp.columns = nuevas_cols
+
+        return df_temp.reset_index(drop=True)
+
+
+      
