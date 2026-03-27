@@ -1,0 +1,253 @@
+import pandas as pd
+import json
+import sqlite3
+
+
+class RepoCrearBase:
+    """
+    Esta clase recibe:
+    - ruta_db: ruta del archivo SQLite
+    - df_config: dataframe con la configuración del insumo (partes/rangos/columnas)
+    """
+    def __init__(self, ruta_db, df_config, db_manager_cls):
+        self.ruta_db = ruta_db
+        self.df_config = df_config
+        self.DB = db_manager_cls
+
+    def crear_tablas_insumo(self):
+        """
+        Crea todas las tablas que requiere el insumo según la configuración.
+        Cada rango = una tabla.
+        """
+        rangos = self.df_config["NOMBRE_RANGO"].unique()
+
+        with self.DB(self.ruta_db) as db:
+            for rango in rangos:
+                df_rango = self.df_config[self.df_config["NOMBRE_RANGO"] == rango]
+
+                columnas_sql = []
+                for _, row in df_rango.iterrows():
+                    col = row["NOMBRE_COLUMN"]
+                    tipo = row["TIPO_DATO_SYS"]
+                    pk = "PRIMARY KEY" if row.get("KEY_COLUMN", 0) == 1 else ""
+                    columnas_sql.append(f"{col} {tipo} {pk}")
+
+                columnas_str = ", ".join(columnas_sql)
+                query = f"CREATE TABLE IF NOT EXISTS {rango} ({columnas_str})"
+                db.ejecutar_dml(query)
+
+        return True
+
+
+#######################
+
+class NormalizadorInsumo:
+    """
+    Responsable de:
+    - Leer archivo según tipo
+    - Particionarlo en partes y rangos
+    - Validar tipado
+    - Insertar en BD
+    - Generar logs de errores
+    """
+
+    def __init__(
+        self,
+        ruta_db,
+        df_config,
+        ruta_archivo,
+        tipo_archivo,
+        version_origen,
+        version_normalizada,
+        lista_insumos_remediacion,
+        db_manager_cls
+    ):
+        self.ruta_db = ruta_db
+        self.df_config = df_config
+        self.ruta_archivo = ruta_archivo
+        self.tipo_archivo = tipo_archivo
+        self.version_origen = version_origen
+        self.version_normalizada = version_normalizada
+        self.remediacion = lista_insumos_remediacion
+        self.DB = db_manager_cls
+
+    # ---------------------------
+    # LECTURA DE ARCHIVOS
+    # ---------------------------
+    def leer_archivo(self):
+        if self.tipo_archivo == "xlsx":
+            return pd.read_excel(self.ruta_archivo, header=None, sheet_name=None)
+        if self.tipo_archivo == "csv":
+            return pd.read_csv(self.ruta_archivo, header=None)
+        if self.tipo_archivo == "txt":
+            return pd.read_csv(self.ruta_archivo, header=None, sep="|")
+        if self.tipo_archivo == "html":
+            return pd.read_html(self.ruta_archivo, header=None)[0]
+
+        raise ValueError("Tipo de archivo no soportado")
+
+    # ---------------------------
+    # PARTICIONAR ARCHIVO
+    # ---------------------------
+    def particionar(self, archivo):
+        """
+        Devuelve dict:
+        { nombre_rango : df_rango }
+        """
+        df_por_tabla = {}
+
+        partes = self.df_config["ID_PARTE"].unique()
+
+        for parte_id in partes:
+            df_parte = self.df_config[self.df_config["ID_PARTE"] == parte_id]
+            nombre_parte = df_parte["NOMBRE_PARTE"].iloc[0]
+
+            # si es excel, seleccionar hoja
+            if isinstance(archivo, dict):
+                df_hoja = archivo[nombre_parte]
+            else:
+                df_hoja = archivo  # csv/txt tienen solo 1 parte
+
+            rangos = df_parte["NOMBRE_RANGO"].unique()
+
+            for rango in rangos:
+                df_rango_conf = df_parte[df_parte["NOMBRE_RANGO"] == rango]
+
+                fila_ini = df_rango_conf["FILA_INICIO"].iloc[0]
+                col_ini = df_rango_conf["COL_INICIO"].iloc[0]
+                col_fin = df_rango_conf["COL_FIN"].iloc[0] + 1
+
+                df_extraido = df_hoja.iloc[fila_ini:, col_ini:col_fin]
+
+                # aplicar nombres de columna
+                df_extraido.columns = df_rango_conf["NOMBRE_COLUMN"].tolist()
+
+                df_por_tabla[rango] = df_extraido
+
+        return df_por_tabla
+
+    # ---------------------------
+    # VALIDAR TIPADO
+    # ---------------------------
+    def validar_tipos(self, rango, df, df_conf, id_insumo):
+        if id_insumo in self.remediacion:
+            return True, {}
+
+        errores = {}
+
+        for _, row in df_conf.iterrows():
+            col = row["NOMBRE_COLUMN"]
+            tipo = row["TIPO_DATO_GRAL"]
+
+            for idx, val in df[col].items():
+                try:
+                    if tipo == "DATE":
+                        pd.to_datetime(val)
+                    elif tipo == "FLOAT":
+                        float(val)
+                    elif tipo == "INT":
+                        int(val)
+                except:
+                    if col not in errores:
+                        errores[col] = []
+                    errores[col].append(idx)
+
+        return (len(errores) == 0), errores
+
+    # ---------------------------
+    # CARGAR DATOS A BD
+    # ---------------------------
+    def cargar_bd(self, tablas_particionadas):
+        logs = []
+
+        with self.DB(self.ruta_db) as db:
+
+            for rango, df in tablas_particionadas.items():
+
+                df_conf = self.df_config[self.df_config["NOMBRE_RANGO"] == rango]
+                id_insumo = df_conf["ID_INSUMO"].iloc[0]
+
+                ok, errores = self.validar_tipos(rango, df, df_conf, id_insumo)
+
+                if not ok:
+                    logs.append({
+                        "id_insumo": id_insumo,
+                        "rango": rango,
+                        "errores": errores
+                    })
+                    continue
+
+                if id_insumo in self.remediacion:
+                    if_exists = "replace"
+                else:
+                    if_exists = "append"
+
+                db.cargar_df_tabla(df, rango, if_exists)
+
+        return logs
+
+
+#####################################
+
+class RepoEstadoVersion:
+    """
+    Actualiza SIEMPRE la tabla de control de versiones
+    """
+
+    def __init__(self, ruta_db, id_insumo, version_origen, version_normalizada, fecha_datos, db_manager_cls):
+        self.ruta_db = ruta_db
+        self.id = id_insumo
+        self.version_origen = version_origen
+        self.version_normalizada = version_normalizada
+        self.fecha_datos = fecha_datos
+        self.DB = db_manager_cls
+
+    def actualizar_version(self, estatus, mensaje_error):
+        query = """
+        REPLACE INTO ESTADO_VERSION
+        (ID_INSUMO, VERSION_ACTUAL_ORIGEN, VERSION_ACTUAL_NORMALIZADA, FECHA_DATOS, ESTATUS_PROCESAMIENTO, MENSAJE_ERROR)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """
+
+        params = [
+            self.id, 
+            self.version_origen,
+            self.version_normalizada,
+            self.fecha_datos,
+            estatus,
+            mensaje_error
+        ]
+
+        with self.DB(self.ruta_db) as db:
+            db.ejecutar_dml(query, params)
+
+############################
+# 1) Crear tablas
+repo_base = RepoCrearBase(ruta_db, df_config, DBManager)
+repo_base.crear_tablas_insumo()
+
+# 2) Normalizar
+norm = NormalizadorInsumo(
+    ruta_db, df_config, ruta_archivo, tipo_archivo,
+    version_origen, version_normalizada,
+    lista_insumos_remediacion, DBManager
+)
+
+archivo = norm.leer_archivo()
+tablas = norm.particionar(archivo)
+logs = norm.cargar_bd(tablas)
+
+# 3) Actualizar tabla estado
+repo_estado = RepoEstadoVersion(
+    ruta_db, 
+    df_config["ID_INSUMO"].iloc[0],
+    version_origen,
+    version_normalizada,
+    fecha_datos,
+    DBManager
+)
+
+if logs:
+    repo_estado.actualizar_version("ERROR", json.dumps(logs))
+else:
+    repo_estado.actualizar_version("OK", "")
