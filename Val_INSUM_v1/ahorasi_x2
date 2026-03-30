@@ -1,0 +1,187 @@
+import json
+
+class LoggerNormalizacion:
+
+    def __init__(self):
+        self.registro = {"errores": []}
+
+    def _buscar_o_crear_parte(self, parte, rango):
+        for entry in self.registro["errores"]:
+            if entry["parte"] == parte and entry["rango"] == rango:
+                return entry
+        entry = {"parte": parte, "rango": rango, "errores": []}
+        self.registro["errores"].append(entry)
+        return entry
+
+    def error_parte(self, parte, mensaje):
+        entry = self._buscar_o_crear_parte(parte, None)
+        entry["errores"].append({"error": mensaje})
+
+    def error_parte_rango(self, parte, rango, mensaje):
+        entry = self._buscar_o_crear_parte(parte, rango)
+        entry["errores"].append({"error": mensaje})
+
+    def error_columna(self, parte, rango, columna, mensaje):
+        entry = self._buscar_o_crear_parte(parte, rango)
+        entry["errores"].append({"columna": columna, "error": mensaje})
+
+    def hay_errores(self):
+        return len(self.registro["errores"]) > 0
+
+    def to_json(self):
+        return json.dumps(self.registro, ensure_ascii=False, indent=2)
+
+
+########################################################################
+
+  @staticmethod
+    def leer(ruta, tipo):
+        partes = {}
+
+        if tipo == "xlsx":
+            xls = pd.ExcelFile(ruta)
+            for hoja in xls.sheet_names:
+                partes[hoja] = pd.read_excel(ruta, sheet_name=hoja, header=None)
+            return partes
+
+        elif tipo == "html":
+            tablas = pd.read_html(ruta, header=None)
+            return {f"tabla_{i}": t for i, t in enumerate(tablas)}
+
+        elif tipo in ("csv", "txt"):
+            df = pd.read_csv(ruta, header=None)
+            return {"UNICA": df}
+
+        else:
+            raise ValueError(f"Tipo de archivo no soportado: {tipo}")
+
+##################################################################
+
+import pandas as pd
+
+class NormalizadorInsumos:
+
+    def __init__(self, df_config, ruta_archivo, tipo_archivo,
+                 version_origen, repo_validador, logger,
+                 fecha_formato="%Y%m%d"):
+
+        self.df_config = df_config
+        self.ruta_archivo = ruta_archivo
+        self.tipo_archivo = tipo_archivo
+        self.version_origen = version_origen
+        self.repo_validador = repo_validador
+        self.logger = logger
+        self.fecha_formato = fecha_formato
+
+        # Mapeo de castings
+        self.map_tipos = {
+            "DATE": self._convert_date,
+            "STR": lambda s: s.astype(str),
+            "FLOAT": lambda s: pd.to_numeric(s, errors="raise")
+        }
+
+    # =====================================================
+    # MÉTODO PRINCIPAL
+    # =====================================================
+    def procesar(self, dict_partes_archivo):
+        """
+        dict_partes_archivo viene del FileReader:
+        {
+            "PARTE_1": df_hoja1,
+            "PARTE_2": df_hoja2,
+            ...
+        }
+        """
+
+        dict_resultado = {}
+        errores = False
+
+        # Agrupa config por parte
+        partes_cfg = self.df_config.groupby("NOMBRE_PARTE")
+
+        for nombre_parte, cfg_parte in partes_cfg:
+
+            # Para consistencia, accedemos por nombre de hoja
+            if nombre_parte not in dict_partes_archivo:
+                self.logger.error_parte(nombre_parte, f"No existe la parte/hoja '{nombre_parte}'")
+                errores = True
+                continue
+
+            df_parte = dict_partes_archivo[nombre_parte]
+            dict_resultado[nombre_parte] = {}
+
+            # Subgrupos por rango (cada rango es una tabla)
+            rangos_cfg = cfg_parte.groupby("NOMBRE_RANGO")
+
+            for nombre_rango, cfg_rango in rangos_cfg:
+
+                try:
+                    # 1. Extraer rango del DF sin encabezados
+                    df_rango = self._extraer_rango(df_parte, cfg_rango)
+
+                    # 2. Aplicar definiciones: columnas, tipos, orden
+                    df_final = self._aplicar_definiciones(df_rango, cfg_rango)
+
+                    # Guardamos si todo ok
+                    dict_resultado[nombre_parte][nombre_rango] = df_final
+
+                except Exception as e:
+                    errores = True
+                    self.logger.error_parte_rango(nombre_parte, nombre_rango, str(e))
+
+        # ---------------------------------------------
+        # SALIDA para registrar el procesamiento
+        # ---------------------------------------------
+        params_repo = {
+            "ID_INSUMO": int(self.df_config["ID_INSUMO"].iloc[0]),
+            "VERSION_ACTUAL_ORIGEN": self.version_origen,
+            "VERSION_ACTUAL_NORMALIZADA": 1,
+            "ESTATUS_PROCESAMIENTO": "ERROR" if errores else "OK",
+            "MENSAJE_ERROR": self.logger.to_json()
+        }
+
+        return dict_resultado, params_repo
+
+    # =====================================================
+    # MÉTODOS PRIVADOS
+    # =====================================================
+
+    # ---------- PUNTO 4 ----------
+    def _extraer_rango(self, df_parte, cfg_rango):
+        fila_ini = int(cfg_rango["FILA_INICIO"].iloc[0])
+        col_ini = int(cfg_rango["COL_INICIO"].iloc[0])
+        col_fin = int(cfg_rango["COL_FIN"].iloc[0])
+
+        # Extraemos
+        df_rango = df_parte.iloc[fila_ini:, col_ini:col_fin + 1]
+        df_rango = df_rango.reset_index(drop=True)
+
+        return df_rango
+
+    # ---------- PUNTO 5 ----------
+    def _aplicar_definiciones(self, df_rango, cfg_rango):
+        cfg_rango = cfg_rango.sort_values("INDEX_COL")
+
+        nombres = cfg_rango["NOMBRE_COLUMN"].tolist()
+        tipos = cfg_rango["TIPO_DATO_GRAL"].tolist()
+
+        # Recortar columnas extra y renombrar
+        df_rango = df_rango.iloc[:, :len(nombres)]
+        df_rango.columns = nombres
+
+        # Casting por tipo
+        for col, tipo in zip(nombres, tipos):
+            if tipo in self.map_tipos:
+                try:
+                    df_rango[col] = self.map_tipos[tipo](df_rango[col])
+                except Exception as e:
+                    raise Exception(f"Error al convertir columna '{col}' a {tipo}: {str(e)}")
+
+        return df_rango
+
+    # ---------- PUNTO 6 ----------
+    def _convert_date(self, serie):
+        try:
+            return pd.to_datetime(serie, errors="raise")
+        except Exception as e:
+            raise Exception(f"No se pudo convertir a DATE: {str(e)}")
