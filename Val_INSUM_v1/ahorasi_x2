@@ -83,26 +83,71 @@ class LoggerJSON:
 
 ########################################################################
 
-  @staticmethod
-    def leer(ruta, tipo):
-        partes = {}
+import pandas as pd
 
-        if tipo == "xlsx":
-            xls = pd.ExcelFile(ruta)
-            for hoja in xls.sheet_names:
-                partes[hoja] = pd.read_excel(ruta, sheet_name=hoja, header=None)
-            return partes
+class FileReader:
 
-        elif tipo == "html":
-            tablas = pd.read_html(ruta, header=None)
-            return {f"tabla_{i}": t for i, t in enumerate(tablas)}
+    @staticmethod
+    def leer_parte(ruta, tipo_archivo, nombre_parte=None):
+        """
+        Lee una parte del archivo:
+        - Para Excel → una hoja
+        - Para CSV/TXT → ignora nombre_parte (solo una parte)
+        - Para HTML → una tabla (índice basado en nombre_parte)
 
-        elif tipo in ("csv", "txt"):
-            df = pd.read_csv(ruta, header=None)
-            return {"UNICA": df}
+        Retorna un DataFrame.
+        """
 
-        else:
-            raise ValueError(f"Tipo de archivo no soportado: {tipo}")
+        tipo_archivo = tipo_archivo.lower()
+
+        # ============================================================
+        #   EXCEL: múltiples hojas → nombre_parte es el nombre de la hoja
+        # ============================================================
+        if tipo_archivo in ("xlsx", "xls"):
+            try:
+                df = pd.read_excel(ruta, sheet_name=nombre_parte, header=None)
+                return df
+            except Exception as e:
+                raise Exception(f"Error al leer hoja '{nombre_parte}': {str(e)}")
+
+        # ============================================================
+        #   CSV / TXT: solo una parte, sin hojas
+        # ============================================================
+        if tipo_archivo in ("csv",):
+            try:
+                return pd.read_csv(ruta, header=None)
+            except Exception as e:
+                raise Exception(f"Error al leer CSV: {str(e)}")
+
+        if tipo_archivo in ("txt",):
+            try:
+                return pd.read_csv(ruta, header=None, sep=None, engine="python")
+            except Exception as e:
+                raise Exception(f"Error al leer TXT: {str(e)}")
+
+        # ============================================================
+        #   HTML: múltiples tablas → usar nombre_parte como índice
+        # ============================================================
+        if tipo_archivo in ("html",):
+            try:
+                tablas = pd.read_html(ruta, header=None)
+            except Exception as e:
+                raise Exception(f"Error al leer HTML: {str(e)}")
+
+            # nombre_parte debe representar el índice de tabla
+            if nombre_parte is None:
+                raise Exception("HTML requiere un índice de tabla en NOMBRE_PARTE")
+
+            try:
+                idx = int(nombre_parte)  # por si la config trae como texto
+                return tablas[idx]
+            except:
+                raise Exception(f"No existe la tabla HTML con índice {nombre_parte}")
+
+        # ============================================================
+        #   Tipo no soportado
+        # ============================================================
+        raise Exception(f"Tipo de archivo '{tipo_archivo}' no soportado")
 
 ##################################################################
 
