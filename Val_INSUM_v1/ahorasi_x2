@@ -185,3 +185,84 @@ class NormalizadorInsumos:
             return pd.to_datetime(serie, errors="raise")
         except Exception as e:
             raise Exception(f"No se pudo convertir a DATE: {str(e)}")
+
+
+
+###########################################
+# validador_tipo_dato.py
+
+import pandas as pd
+from datetime import datetime
+
+class ValidadorTipoDato:
+
+    @staticmethod
+    def validate_column(df, col_name, tipo_dato_general):
+        """
+        Dispatcher central: llama al validador correcto
+        según el tipo de dato declarado en df_config.
+        """
+        if tipo_dato_general == "DATE":
+            return ValidadorTipoDato.validate_date_column(df, col_name)
+
+        if tipo_dato_general == "STR":
+            return ValidadorTipoDato.validate_str_column(df, col_name)
+
+        if tipo_dato_general == "FLOAT":
+            return ValidadorTipoDato.validate_float_column(df, col_name)
+
+        # Si no está reconocido, no hacemos nada
+        return df, []
+
+    @staticmethod
+    def validate_date_column(df, col_name):
+        errores = []
+
+        for idx, valor in df[col_name].items():
+            try:
+                # Validar fecha (acepta muchos formatos)
+                fecha = pd.to_datetime(valor, errors='raise')
+            except Exception:
+                errores.append({
+                    "fila": idx,
+                    "columna": col_name,
+                    "valor": valor,
+                    "error": "Fecha inválida"
+                })
+
+        # Si hubo errores → regresas sin convertir
+        if errores:
+            return df, errores
+
+        # Convertir a formato SQLite: YYYY-MM-DD
+        df[col_name] = pd.to_datetime(df[col_name]).dt.strftime("%Y-%m-%d")
+
+        return df, []
+
+    @staticmethod
+    def validate_str_column(df, col_name):
+        errores = []
+        # Simplemente convertir a string y strip
+        df[col_name] = df[col_name].astype(str).str.strip()
+        return df, errores
+
+    @staticmethod
+    def validate_float_column(df, col_name):
+        errores = []
+        for idx, valor in df[col_name].items():
+            try:
+                float(valor)
+            except:
+                errores.append({
+                    "fila": idx,
+                    "columna": col_name,
+                    "valor": valor,
+                    "error": "No es número válido"
+                })
+
+        if errores:
+            return df, errores
+
+        # Si todo ok, convertir
+        df[col_name] = pd.to_numeric(df[col_name])
+        return df, []
