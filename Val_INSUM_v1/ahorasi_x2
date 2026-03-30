@@ -1,35 +1,84 @@
+# logger_json.py
+
 import json
 
-class LoggerNormalizacion:
+class LoggerJSON:
 
     def __init__(self):
-        self.registro = {"errores": []}
+        self.errores = {
+            "partes": {}
+        }
 
-    def _buscar_o_crear_parte(self, parte, rango):
-        for entry in self.registro["errores"]:
-            if entry["parte"] == parte and entry["rango"] == rango:
-                return entry
-        entry = {"parte": parte, "rango": rango, "errores": []}
-        self.registro["errores"].append(entry)
-        return entry
+    # ============================================================
+    #   ERRORES A NIVEL PARTE
+    # ============================================================
 
-    def error_parte(self, parte, mensaje):
-        entry = self._buscar_o_crear_parte(parte, None)
-        entry["errores"].append({"error": mensaje})
+    def log_parte_error(self, parte, mensaje):
+        """
+        Cuando falló la lectura de una hoja / parte completa.
+        """
+        if parte not in self.errores["partes"]:
+            self.errores["partes"][parte] = {}
 
-    def error_parte_rango(self, parte, rango, mensaje):
-        entry = self._buscar_o_crear_parte(parte, rango)
-        entry["errores"].append({"error": mensaje})
+        self.errores["partes"][parte]["_error_parte"] = mensaje
 
-    def error_columna(self, parte, rango, columna, mensaje):
-        entry = self._buscar_o_crear_parte(parte, rango)
-        entry["errores"].append({"columna": columna, "error": mensaje})
+    # ============================================================
+    #   ERRORES A NIVEL RANGO
+    # ============================================================
 
-    def hay_errores(self):
-        return len(self.registro["errores"]) > 0
+    def log_rango_error(self, parte, rango, mensaje):
+        """
+        Cuando falló el recorte del rango (fila/col).
+        """
+        if parte not in self.errores["partes"]:
+            self.errores["partes"][parte] = {}
 
-    def to_json(self):
-        return json.dumps(self.registro, ensure_ascii=False, indent=2)
+        if rango not in self.errores["partes"][parte]:
+            self.errores["partes"][parte][rango] = {}
+
+        self.errores["partes"][parte][rango]["_error_rango"] = mensaje
+
+    # ============================================================
+    #   ERRORES A NIVEL COLUMNA
+    # ============================================================
+
+    def log_errores_columna(self, parte, rango, columna, errores_col):
+        """
+        Errores del validador de tipos (una o varias filas).
+        """
+        if parte not in self.errores["partes"]:
+            self.errores["partes"][parte] = {}
+
+        if rango not in self.errores["partes"][parte]:
+            self.errores["partes"][parte][rango] = {}
+
+        if "columnas" not in self.errores["partes"][parte][rango]:
+            self.errores["partes"][parte][rango]["columnas"] = {}
+
+        self.errores["partes"][parte][rango]["columnas"][columna] = errores_col
+
+    # ============================================================
+    #   OBTENER JSON
+    # ============================================================
+
+    def get_json(self):
+        """
+        Devuelve el dict con errores como JSON serializable.
+        """
+        return self.errores
+
+    # ============================================================
+    #   RESUMEN PLANO (para meter en MENSAJE_ERROR en la tabla)
+    # ============================================================
+
+    def resumen(self):
+        """
+        Devuelve el log como cadena JSON (usado en MENSAJE_ERROR).
+        """
+        try:
+            return json.dumps(self.errores, ensure_ascii=False)
+        except:
+            return str(self.errores)
 
 
 ########################################################################
