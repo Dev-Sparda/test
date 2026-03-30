@@ -57,134 +57,114 @@ class LoggerNormalizacion:
 
 ##################################################################
 
-import pandas as pd
+# normalizador_insumos.py
+
+from file_reader import FileReader
+from validador_tipo_dato import ValidadorTipoDato
+from logger_json import LoggerJSON
 
 class NormalizadorInsumos:
 
-    def __init__(self, df_config, ruta_archivo, tipo_archivo,
-                 version_origen, repo_validador, logger,
-                 fecha_formato="%Y%m%d"):
-
+    def __init__(self, df_config, ruta_archivo, tipo_archivo, version_origen):
+        """
+        df_config: configuración del insumo (tiene NOMBRE_PARTE, NOMBRE_RANGO, etc)
+        ruta_archivo: ruta del archivo origen
+        tipo_archivo: 'xlsx', 'csv', 'txt', 'html'
+        version_origen: versión del insumo origen (para tabla de trazabilidad)
+        """
         self.df_config = df_config
         self.ruta_archivo = ruta_archivo
         self.tipo_archivo = tipo_archivo
         self.version_origen = version_origen
-        self.repo_validador = repo_validador
-        self.logger = logger
-        self.fecha_formato = fecha_formato
 
-        # Mapeo de castings
-        self.map_tipos = {
-            "DATE": self._convert_date,
-            "STR": lambda s: s.astype(str),
-            "FLOAT": lambda s: pd.to_numeric(s, errors="raise")
-        }
+        self.logger = LoggerJSON()
 
-    # =====================================================
-    # MÉTODO PRINCIPAL
-    # =====================================================
-    def procesar(self, dict_partes_archivo):
+    # ============================================================
+    #     MÉTODO PRINCIPAL
+    # ============================================================
+
+    def procesar(self):
         """
-        dict_partes_archivo viene del FileReader:
-        {
-            "PARTE_1": df_hoja1,
-            "PARTE_2": df_hoja2,
-            ...
-        }
+        Retorna:
+            - dict_final: {parte: {rango: df}}
+            - errores_json: estructura JSON del logger
+            - params_validacion: dict con info para tabla de trazabilidad
         """
+        dict_final = {}
+        hubo_error = False
 
-        dict_resultado = {}
-        errores = False
+        # Obtener lista de partes únicas del insumo
+        partes = self.df_config["NOMBRE_PARTE"].unique()
 
-        # Agrupa config por parte
-        partes_cfg = self.df_config.groupby("NOMBRE_PARTE")
+        for parte in partes:
+            df_cfg_parte = self.df_config[self.df_config["NOMBRE_PARTE"] == parte]
 
-        for nombre_parte, cfg_parte in partes_cfg:
-
-            # Para consistencia, accedemos por nombre de hoja
-            if nombre_parte not in dict_partes_archivo:
-                self.logger.error_parte(nombre_parte, f"No existe la parte/hoja '{nombre_parte}'")
-                errores = True
+            try:
+                # Leer archivo por hoja
+                df_parte = FileReader.leer_parte(
+                    ruta=self.ruta_archivo,
+                    tipo_archivo=self.tipo_archivo,
+                    nombre_parte=parte
+                )
+            except Exception as e:
+                self.logger.log_parte_error(parte, str(e))
+                hubo_error = True
                 continue
 
-            df_parte = dict_partes_archivo[nombre_parte]
-            dict_resultado[nombre_parte] = {}
+            # Diccionario de rangos para esta parte
+            dict_rangos = {}
 
-            # Subgrupos por rango (cada rango es una tabla)
-            rangos_cfg = cfg_parte.groupby("NOMBRE_RANGO")
+            # Procesar cada rango dentro de la parte
+            rangos = df_cfg_parte["NOMBRE_RANGO"].unique()
 
-            for nombre_rango, cfg_rango in rangos_cfg:
+            for rango in rangos:
+                df_cfg_rango = df_cfg_parte[df_cfg_parte["NOMBRE_RANGO"] == rango]
 
+                fila_inicio = df_cfg_rango["FILA_INICIO"].iloc[0]
+                col_ini = df_cfg_rango["COL_INICIO"].iloc[0]
+                col_fin = df_cfg_rango["COL_FIN"].iloc[0]
+                nombres_cols = df_cfg_rango["NOMBRE_COLUMN"].tolist()
+
+                # Recortar rango de la hoja
                 try:
-                    # 1. Extraer rango del DF sin encabezados
-                    df_rango = self._extraer_rango(df_parte, cfg_rango)
-
-                    # 2. Aplicar definiciones: columnas, tipos, orden
-                    df_final = self._aplicar_definiciones(df_rango, cfg_rango)
-
-                    # Guardamos si todo ok
-                    dict_resultado[nombre_parte][nombre_rango] = df_final
-
+                    df_rango = df_parte.iloc[fila_inicio:, col_ini:col_fin+1]
+                    df_rango.columns = nombres_cols
                 except Exception as e:
-                    errores = True
-                    self.logger.error_parte_rango(nombre_parte, nombre_rango, str(e))
+                    self.logger.log_rango_error(parte, rango, str(e))
+                    hubo_error = True
+                    continue
 
-        # ---------------------------------------------
-        # SALIDA para registrar el procesamiento
-        # ---------------------------------------------
-        params_repo = {
+                # VALIDACIÓN DE COLUMNAS
+                for _, row in df_cfg_rango.iterrows():
+                    col_name = row["NOMBRE_COLUMN"]
+                    tipo_dato = row["TIPO_DATO_GRAL"]
+
+                    df_rango, errores_col = ValidadorTipoDato.validate_column(
+                        df_rango, col_name, tipo_dato
+                    )
+
+                    if errores_col:
+                        hubo_error = True
+                        self.logger.log_errores_columna(parte, rango, col_name, errores_col)
+
+                # Agregar rango ya procesado
+                dict_rangos[rango] = df_rango
+
+            dict_final[parte] = dict_rangos
+
+        # ============================================================
+        #   ARMAR PARAMS PARA TABLA DE TRAZABILIDAD
+        # ============================================================
+
+        params_validacion = {
             "ID_INSUMO": int(self.df_config["ID_INSUMO"].iloc[0]),
             "VERSION_ACTUAL_ORIGEN": self.version_origen,
-            "VERSION_ACTUAL_NORMALIZADA": 1,
-            "ESTATUS_PROCESAMIENTO": "ERROR" if errores else "OK",
-            "MENSAJE_ERROR": self.logger.to_json()
+            "VERSION_ACTUAL_NORMALIZADA": None if hubo_error else self.version_origen + 1,
+            "ESTATUS_PROCESAMIENTO": "ERROR" if hubo_error else "OK",
+            "MENSAJE_ERROR": None if not hubo_error else self.logger.resumen(),
         }
 
-        return dict_resultado, params_repo
-
-    # =====================================================
-    # MÉTODOS PRIVADOS
-    # =====================================================
-
-    # ---------- PUNTO 4 ----------
-    def _extraer_rango(self, df_parte, cfg_rango):
-        fila_ini = int(cfg_rango["FILA_INICIO"].iloc[0])
-        col_ini = int(cfg_rango["COL_INICIO"].iloc[0])
-        col_fin = int(cfg_rango["COL_FIN"].iloc[0])
-
-        # Extraemos
-        df_rango = df_parte.iloc[fila_ini:, col_ini:col_fin + 1]
-        df_rango = df_rango.reset_index(drop=True)
-
-        return df_rango
-
-    # ---------- PUNTO 5 ----------
-    def _aplicar_definiciones(self, df_rango, cfg_rango):
-        cfg_rango = cfg_rango.sort_values("INDEX_COL")
-
-        nombres = cfg_rango["NOMBRE_COLUMN"].tolist()
-        tipos = cfg_rango["TIPO_DATO_GRAL"].tolist()
-
-        # Recortar columnas extra y renombrar
-        df_rango = df_rango.iloc[:, :len(nombres)]
-        df_rango.columns = nombres
-
-        # Casting por tipo
-        for col, tipo in zip(nombres, tipos):
-            if tipo in self.map_tipos:
-                try:
-                    df_rango[col] = self.map_tipos[tipo](df_rango[col])
-                except Exception as e:
-                    raise Exception(f"Error al convertir columna '{col}' a {tipo}: {str(e)}")
-
-        return df_rango
-
-    # ---------- PUNTO 6 ----------
-    def _convert_date(self, serie):
-        try:
-            return pd.to_datetime(serie, errors="raise")
-        except Exception as e:
-            raise Exception(f"No se pudo convertir a DATE: {str(e)}")
+        return dict_final, self.logger.get_json(), params_validacion
 
 
 
