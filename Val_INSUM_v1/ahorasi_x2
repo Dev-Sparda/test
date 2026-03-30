@@ -151,8 +151,6 @@ class FileReader:
 
 ##################################################################
 
-# normalizador_insumos.py
-
 from file_reader import FileReader
 from validador_tipo_dato import ValidadorTipoDato
 from logger_json import LoggerJSON
@@ -160,41 +158,31 @@ from logger_json import LoggerJSON
 class NormalizadorInsumos:
 
     def __init__(self, df_config, ruta_archivo, tipo_archivo, version_origen):
-        """
-        df_config: configuración del insumo (tiene NOMBRE_PARTE, NOMBRE_RANGO, etc)
-        ruta_archivo: ruta del archivo origen
-        tipo_archivo: 'xlsx', 'csv', 'txt', 'html'
-        version_origen: versión del insumo origen (para tabla de trazabilidad)
-        """
         self.df_config = df_config
         self.ruta_archivo = ruta_archivo
         self.tipo_archivo = tipo_archivo
         self.version_origen = version_origen
-
         self.logger = LoggerJSON()
 
     # ============================================================
-    #     MÉTODO PRINCIPAL
+    # MÉTODO PRINCIPAL
     # ============================================================
 
     def procesar(self):
-        """
-        Retorna:
-            - dict_final: {parte: {rango: df}}
-            - errores_json: estructura JSON del logger
-            - params_validacion: dict con info para tabla de trazabilidad
-        """
+
         dict_final = {}
         hubo_error = False
 
-        # Obtener lista de partes únicas del insumo
         partes = self.df_config["NOMBRE_PARTE"].unique()
 
         for parte in partes:
+
             df_cfg_parte = self.df_config[self.df_config["NOMBRE_PARTE"] == parte]
 
+            # ----------------------
+            # Leer la hoja / parte
+            # ----------------------
             try:
-                # Leer archivo por hoja
                 df_parte = FileReader.leer_parte(
                     ruta=self.ruta_archivo,
                     tipo_archivo=self.tipo_archivo,
@@ -205,30 +193,53 @@ class NormalizadorInsumos:
                 hubo_error = True
                 continue
 
-            # Diccionario de rangos para esta parte
             dict_rangos = {}
-
-            # Procesar cada rango dentro de la parte
             rangos = df_cfg_parte["NOMBRE_RANGO"].unique()
 
+            # ============================================================
+            # PROCESAR CADA RANGO
+            # ============================================================
             for rango in rangos:
+
                 df_cfg_rango = df_cfg_parte[df_cfg_parte["NOMBRE_RANGO"] == rango]
 
-                fila_inicio = df_cfg_rango["FILA_INICIO"].iloc[0]
-                col_ini = df_cfg_rango["COL_INICIO"].iloc[0]
-                col_fin = df_cfg_rango["COL_FIN"].iloc[0]
+                fila_inicio = int(df_cfg_rango["FILA_INICIO"].iloc[0])
+                col_ini = int(df_cfg_rango["COL_INICIO"].iloc[0])
+                col_fin = int(df_cfg_rango["COL_FIN"].iloc[0])
+
+                # Lista de INDEX_COL
+                index_cols = (
+                    df_cfg_rango["INDEX_COL"]
+                    .astype(int)
+                    .tolist()
+                )
+
                 nombres_cols = df_cfg_rango["NOMBRE_COLUMN"].tolist()
 
-                # Recortar rango de la hoja
                 try:
+                    # 1️⃣ Recorte físico del rango
                     df_rango = df_parte.iloc[fila_inicio:, col_ini:col_fin+1]
+
+                    # 2️⃣ Selección de columnas internas
+                    df_rango = df_rango.iloc[:, index_cols]
+
+                    # 3️⃣ Renombrado
+                    if len(nombres_cols) != df_rango.shape[1]:
+                        raise Exception(
+                            f"Desajuste columnas: rango recortado tiene {df_rango.shape[1]} "
+                            f"pero NOMBRE_COLUMN define {len(nombres_cols)}"
+                        )
+
                     df_rango.columns = nombres_cols
+
                 except Exception as e:
                     self.logger.log_rango_error(parte, rango, str(e))
                     hubo_error = True
                     continue
 
+                # ============================================
                 # VALIDACIÓN DE COLUMNAS
+                # ============================================
                 for _, row in df_cfg_rango.iterrows():
                     col_name = row["NOMBRE_COLUMN"]
                     tipo_dato = row["TIPO_DATO_GRAL"]
@@ -241,13 +252,12 @@ class NormalizadorInsumos:
                         hubo_error = True
                         self.logger.log_errores_columna(parte, rango, col_name, errores_col)
 
-                # Agregar rango ya procesado
                 dict_rangos[rango] = df_rango
 
             dict_final[parte] = dict_rangos
 
         # ============================================================
-        #   ARMAR PARAMS PARA TABLA DE TRAZABILIDAD
+        #   PARAMS PARA TABLA DE TRAZABILIDAD
         # ============================================================
 
         params_validacion = {
@@ -259,8 +269,6 @@ class NormalizadorInsumos:
         }
 
         return dict_final, self.logger.get_json(), params_validacion
-
-
 
 ###########################################
 # validador_tipo_dato.py
