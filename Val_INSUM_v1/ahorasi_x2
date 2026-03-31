@@ -422,3 +422,87 @@ class CargadorInsumoSQLite:
                         db.cursor.executemany(query, df_replace.values.tolist())
                     except Exception as e:
                         raise Exception(f"Error insertando datos en tabla {rango}: {e}")
+
+##################################################
+import pandas as pd
+from db_manager import DBManager
+
+class CargadorInsumoSQLite:
+
+    def __init__(self, ruta_db, info_log):
+        """
+        info_log = {
+            "id_insumo": int,
+            "origen": str,
+            "fecha_datos": str,
+            "fecha_normalizacion": str,
+            "version": int
+        }
+        """
+        self.ruta_db = ruta_db
+        self.info_log = info_log
+
+    def cargar_dict_dfs(self, dict_dfs):
+        """
+        dict_dfs: { parte : { rango : df } }
+        Cada 'rango' es el nombre de la tabla en sqlite.
+        Retorna True si la carga completa fue exitosa.
+        """
+
+        with DBManager(self.ruta_db) as db:   # Maneja commit/rollback automático
+
+            # ==================================
+            #  INSERTAR TODOS LOS RANGOS / TABLAS
+            # ==================================
+            for parte, dict_rangos in dict_dfs.items():
+                for rango, df in dict_rangos.items():
+
+                    # -----------------------------------
+                    # SIMULAR TRUNCATE (DELETE + no drop)
+                    # -----------------------------------
+                    try:
+                        db.cursor.execute(f"DELETE FROM {rango};")
+                    except Exception as e:
+                        raise Exception(f"Error haciendo DELETE en tabla {rango}: {e}")
+
+                    # -----------------------------------
+                    # PREPARAR DF (convertir NaN -> None)
+                    # -----------------------------------
+                    df_replace = df.where(pd.notnull(df), None)
+
+                    placeholders = ",".join(["?"] * len(df_replace.columns))
+                    columnas = ",".join(df_replace.columns)
+
+                    query = f"""
+                        INSERT INTO {rango} ({columnas})
+                        VALUES ({placeholders})
+                    """
+
+                    # -----------------------------------
+                    # INSERT POR LOTES
+                    # -----------------------------------
+                    try:
+                        db.cursor.executemany(query, df_replace.values.tolist())
+                    except Exception as e:
+                        raise Exception(f"Error insertando datos en tabla {rango}: {e}")
+
+            # ==================================
+            #  SI TODO SALIÓ BIEN → INSERTAR LOG
+            # ==================================
+            try:
+                db.cursor.execute("""
+                    INSERT INTO LOG_INSUMO
+                    (ID_INSUMO, ORIGEN_INSUMO, FECHA_DATOS, FECHA_NORMALIZACION, VERSION)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    self.info_log["id_insumo"],
+                    self.info_log["origen"],
+                    self.info_log["fecha_datos"],
+                    self.info_log["fecha_normalizacion"],
+                    self.info_log["version"]
+                ))
+            except Exception as e:
+                raise Exception(f"Error insertando registro en LOG_INSUMO: {e}")
+
+            # Si no hubo excepción → commit automático del DBManager
+            return True
