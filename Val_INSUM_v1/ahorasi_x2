@@ -348,3 +348,77 @@ class ValidadorTipoDato:
         # Si todo ok, convertir
         df[col_name] = pd.to_numeric(df[col_name])
         return df, []
+
+
+###############################################
+import pandas as pd
+from db_manager import DBManager
+
+class CargadorInsumoSQLite:
+
+    def __init__(self, ruta_db):
+        # Ruta completa del archivo .db a usar
+        self.ruta_db = ruta_db
+
+    def cargar_dict_dfs(self, dict_dfs):
+        """
+        dict_dfs: estructura generada por el normalizador:
+            {
+                "PARTE_1": {
+                    "RANGO_1": df1,
+                    "RANGO_2": df2,
+                },
+                "PARTE_2": {
+                    "RANGO_A": df3,
+                    ...
+                }
+            }
+
+        Cada 'rango' es **exactamente** el nombre de la tabla en SQLite.
+        """
+
+        # Abre conexión a SQLite manejada por DBManager (with = commit/rollback automático)
+        with DBManager(self.ruta_db) as db:
+
+            # Iterar por cada parte (hoja / segmento lógico)
+            for parte, dict_rangos in dict_dfs.items():
+
+                # Iterar por cada rango dentro de la parte (equivale a tabla destino)
+                for rango, df in dict_rangos.items():
+
+                    # ============================================================
+                    #   1) SIMULAR TRUNCATE (SQLite no soporta TRUNCATE)
+                    # ============================================================
+                    # Esto elimina todos los registros previos de la tabla manteniendo su estructura.
+                    try:
+                        db.cursor.execute(f"DELETE FROM {rango};")
+                    except Exception as e:
+                        raise Exception(f"Error haciendo DELETE en tabla {rango}: {e}")
+
+                    # ============================================================
+                    #   2) PREPARAR EL DATAFRAME PARA INSERCIÓN
+                    # ============================================================
+                    # Reemplazar NaN por None (SQLite no acepta NaN, pero sí NULL)
+                    df_replace = df.where(pd.notnull(df), None)
+
+                    # Crear placeholders para el INSERT: (?, ?, ?, ...)
+                    placeholders = ",".join(["?"] * len(df_replace.columns))
+
+                    # Lista de nombres de columnas del DF → columnas de la tabla
+                    columnas = ",".join(df_replace.columns)
+
+                    # Query parametrizada para uso con executemany (alta eficiencia)
+                    query = f"""
+                        INSERT INTO {rango} ({columnas})
+                        VALUES ({placeholders})
+                    """
+
+                    # ============================================================
+                    #   3) INSERT MASIVO CON executemany
+                    # ============================================================
+                    # Insertar todas las filas del DF en la tabla correspondiente.
+                    # Muy rápido porque usa el driver C de SQLite directamente.
+                    try:
+                        db.cursor.executemany(query, df_replace.values.tolist())
+                    except Exception as e:
+                        raise Exception(f"Error insertando datos en tabla {rango}: {e}")
