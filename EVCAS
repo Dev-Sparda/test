@@ -75,11 +75,29 @@ ORDER BY
     U.ID_CNBV;
 
 --cc_0005
+/*=========================================================
+ AUDITORÍA EVCA - FIDEICOMISOS (Versión Optimizada)
+-----------------------------------------------------------
+Universo:
+    R04C0430
+    T_ALTA = 501
+    TIPO_CAR IN (330,340)
+
+Valida:
+    ✔ Consistencia de NOMB_CLI
+    ✔ Consistencia de MUNI_CRED
+    ✔ Consistencia de LOC_CRED
+    ✔ Consistencia de GPO_RIES
+    ✔ Consistencia de ACT_ECO
+    ✔ Consistencia de TIPO_CAR
+    ✔ Existencia de seguimiento (431) en el PERIODO del alta
+=========================================================*/
+
 WITH fideicomisos AS (
 
     SELECT DISTINCT
            RFC,
-           PERIODO
+           PERIODO AS PERIODO_ALTA
     FROM R04C0430
     WHERE T_ALTA = 501
       AND TIPO_CAR IN (330,340)
@@ -88,55 +106,120 @@ WITH fideicomisos AS (
 
 historial AS (
 
-    SELECT t.*
+    SELECT
+        t.RFC,
+        t.PERIODO,
+        t.NOMB_CLI,
+        t.MUNI_CRED,
+        t.LOC_CRED,
+        t.GPO_RIES,
+        t.ACT_ECO,
+        t.TIPO_CAR,
+        f.PERIODO_ALTA
     FROM R04C0430 t
-    JOIN fideicomisos f
-      ON t.RFC = f.RFC
+    INNER JOIN fideicomisos f
+        ON t.RFC = f.RFC
 
 ),
 
 seguimientos AS (
 
     SELECT DISTINCT
-           RFC,
-           PERIODO
-    FROM R04C0431
+           s.RFC,
+           s.PERIODO
+    FROM R04C0431 s
+    INNER JOIN fideicomisos f
+        ON s.RFC = f.RFC
+
+),
+
+auditoria AS (
+
+    SELECT
+
+        h.RFC,
+
+        MIN(h.PERIODO) AS PRIMER_PERIODO,
+
+        MAX(h.PERIODO) AS ULTIMO_PERIODO,
+
+        h.PERIODO_ALTA,
+
+        COUNT(DISTINCT h.PERIODO) AS PERIODOS_REPORTADOS,
+
+        COUNT(*) AS TOTAL_APARICIONES,
+
+        CASE
+            WHEN COUNT(DISTINCT h.NOMB_CLI) > 1
+            THEN 'ERROR'
+            ELSE 'OK'
+        END AS ERR_NOMBRE_FIDEICOMISO,
+
+        CASE
+            WHEN COUNT(DISTINCT h.MUNI_CRED) > 1
+            THEN 'ERROR'
+            ELSE 'OK'
+        END AS ERR_MUNICIPIO,
+
+        CASE
+            WHEN COUNT(DISTINCT h.LOC_CRED) > 1
+            THEN 'ERROR'
+            ELSE 'OK'
+        END AS ERR_LOCALIDAD,
+
+        CASE
+            WHEN COUNT(DISTINCT h.GPO_RIES) > 1
+            THEN 'ERROR'
+            ELSE 'OK'
+        END AS ERR_GRUPO_RIESGO,
+
+        CASE
+            WHEN COUNT(DISTINCT h.ACT_ECO) > 1
+            THEN 'ERROR'
+            ELSE 'OK'
+        END AS ERR_ACTIVIDAD_ECONOMICA,
+
+        CASE
+            WHEN COUNT(DISTINCT h.TIPO_CAR) > 1
+            THEN 'ERROR'
+            ELSE 'OK'
+        END AS ERR_TIPO_CARTERA,
+
+        CASE
+            WHEN MAX(
+                    CASE
+                        WHEN s.RFC IS NOT NULL
+                         AND s.PERIODO = h.PERIODO_ALTA
+                        THEN 1
+                        ELSE 0
+                    END
+                 ) = 1
+            THEN 'OK'
+            ELSE 'ERROR'
+        END AS ERR_SEGUIMIENTO_431
+
+    FROM historial h
+
+    LEFT JOIN seguimientos s
+           ON s.RFC = h.RFC
+
+    GROUP BY
+        h.RFC,
+        h.PERIODO_ALTA
 
 )
 
-SELECT
+SELECT *
 
-    h.RFC,
+FROM auditoria
 
-    COUNT(*) AS TOTAL_REGISTROS,
+WHERE
+       ERR_NOMBRE_FIDEICOMISO = 'ERROR'
+    OR ERR_MUNICIPIO = 'ERROR'
+    OR ERR_LOCALIDAD = 'ERROR'
+    OR ERR_GRUPO_RIESGO = 'ERROR'
+    OR ERR_ACTIVIDAD_ECONOMICA = 'ERROR'
+    OR ERR_TIPO_CARTERA = 'ERROR'
+    OR ERR_SEGUIMIENTO_431 = 'ERROR'
 
-    COUNT(DISTINCT h.NOMB_CLI)  AS NOMBRES,
-    COUNT(DISTINCT h.MUNI_CRED) AS MUNICIPIOS,
-    COUNT(DISTINCT h.LOC_CRED)  AS LOCALIDADES,
-    COUNT(DISTINCT h.GPO_RIES)  AS GRUPOS_RIESGO,
-    COUNT(DISTINCT h.ACT_ECO)   AS ACTIVIDADES,
-    COUNT(DISTINCT h.TIPO_CAR)  AS TIPOS_CARTERA,
-
-    CASE
-        WHEN MAX(
-            CASE
-                WHEN s.RFC IS NOT NULL THEN 1
-                ELSE 0
-            END
-        ) = 1
-        THEN 'SI'
-        ELSE 'NO'
-    END AS TIENE_SEGUIMIENTO
-
-FROM historial h
-
-LEFT JOIN fideicomisos f
-       ON f.RFC = h.RFC
-
-LEFT JOIN seguimientos s
-       ON s.RFC = f.RFC
-      AND s.PERIODO = f.PERIODO
-
-GROUP BY h.RFC
-
-ORDER BY h.RFC;
+ORDER BY RFC;
