@@ -75,8 +75,30 @@ ORDER BY
     U.ID_CNBV;
 
 --cc_0005
+
+/*=========================================================
+ AUDITORÍA EVCA - FIDEICOMISOS
+-----------------------------------------------------------
+Universo:
+    Última ALTA (T_ALTA = 501)
+    con TIPO_CAR IN (330,340)
+
+Validaciones:
+    - Consistencia de NOMB_CLI
+    - Consistencia de MUNI_CRED
+    - Consistencia de LOC_CRED
+    - Consistencia de GPO_RIES
+    - Consistencia de ACT_ECO
+    - Consistencia de TIPO_CAR
+    - Existencia de seguimiento en R04C0431
+      para el periodo de la última alta
+=========================================================*/
+
 WITH
 
+/*---------------------------------------------------------
+  Último periodo de alta por RFC
+---------------------------------------------------------*/
 max_altas AS (
 
     SELECT
@@ -89,75 +111,226 @@ max_altas AS (
 
 ),
 
+/*---------------------------------------------------------
+  Registro completo de la última alta
+---------------------------------------------------------*/
 ultima_alta AS (
 
     SELECT t.*
 
     FROM R04C0430 t
-    JOIN max_altas m
-      ON t.RFC = m.RFC
-     AND t.PERIODO = m.PERIODO_ALTA
+
+    INNER JOIN max_altas m
+        ON t.RFC = m.RFC
+       AND t.PERIODO = m.PERIODO_ALTA
 
     WHERE t.T_ALTA = 501
       AND t.TIPO_CAR IN (330,340)
 
 ),
 
-universo AS (
-
-    SELECT DISTINCT RFC
-    FROM ultima_alta
-
-),
-
+/*---------------------------------------------------------
+  Historial completo únicamente del universo
+---------------------------------------------------------*/
 historial AS (
 
     SELECT
-        h.*,
+
+        h.RFC,
+        h.PERIODO,
+        h.NOMB_CLI,
+        h.MUNI_CRED,
+        h.LOC_CRED,
+        h.GPO_RIES,
+        h.ACT_ECO,
+        h.TIPO_CAR,
+
         u.PERIODO AS PERIODO_ALTA
+
     FROM R04C0430 h
-    JOIN ultima_alta u
-      ON h.RFC=u.RFC
+
+    INNER JOIN ultima_alta u
+        ON h.RFC = u.RFC
 
 ),
 
+/*---------------------------------------------------------
+  Seguimientos únicamente del universo
+---------------------------------------------------------*/
+seguimientos AS (
+
+    SELECT DISTINCT
+
+        s.RFC,
+        s.PERIODO
+
+    FROM R04C0431 s
+
+    INNER JOIN ultima_alta u
+        ON s.RFC = u.RFC
+
+),
+
+/*---------------------------------------------------------
+  Auditoría
+---------------------------------------------------------*/
 auditoria AS (
 
     SELECT
 
         h.RFC,
 
-        MIN(PERIODO) PRIMER_PERIODO,
-        MAX(PERIODO) ULTIMO_PERIODO,
+        MIN(h.PERIODO) AS PRIMER_PERIODO,
+
+        MAX(h.PERIODO) AS ULTIMO_PERIODO,
 
         h.PERIODO_ALTA,
 
-        COUNT(DISTINCT PERIODO) PERIODOS_REPORTADOS,
+        COUNT(DISTINCT h.PERIODO) AS PERIODOS_REPORTADOS,
 
-        COUNT(*) TOTAL_APARICIONES,
+        COUNT(*) AS TOTAL_APARICIONES,
 
-        COUNT(DISTINCT NOMB_CLI) CNT_NOMBRE,
-        COUNT(DISTINCT MUNI_CRED) CNT_MUNI,
-        COUNT(DISTINCT LOC_CRED) CNT_LOC,
-        COUNT(DISTINCT GPO_RIES) CNT_GPO,
-        COUNT(DISTINCT ACT_ECO) CNT_ACT,
-        COUNT(DISTINCT TIPO_CAR) CNT_TIPO,
+        CASE
+            WHEN COUNT(DISTINCT h.NOMB_CLI) > 1
+                THEN 'ERROR'
+            ELSE 'OK'
+        END AS ERR_NOMBRE,
 
-        EXISTS(
+        CASE
+            WHEN COUNT(DISTINCT h.MUNI_CRED) > 1
+                THEN 'ERROR'
+            ELSE 'OK'
+        END AS ERR_MUNICIPIO,
 
-            SELECT 1
+        CASE
+            WHEN COUNT(DISTINCT h.LOC_CRED) > 1
+                THEN 'ERROR'
+            ELSE 'OK'
+        END AS ERR_LOCALIDAD,
 
-            FROM R04C0431 s
+        CASE
+            WHEN COUNT(DISTINCT h.GPO_RIES) > 1
+                THEN 'ERROR'
+            ELSE 'OK'
+        END AS ERR_GRUPO_RIESGO,
 
-            WHERE s.RFC=h.RFC
-              AND s.PERIODO=h.PERIODO_ALTA
+        CASE
+            WHEN COUNT(DISTINCT h.ACT_ECO) > 1
+                THEN 'ERROR'
+            ELSE 'OK'
+        END AS ERR_ACTIVIDAD,
 
-        ) TIENE_431
+        CASE
+            WHEN COUNT(DISTINCT h.TIPO_CAR) > 1
+                THEN 'ERROR'
+            ELSE 'OK'
+        END AS ERR_TIPO_CARTERA,
+
+        CASE
+
+            WHEN MAX(
+
+                CASE
+
+                    WHEN s.RFC IS NOT NULL
+                     AND s.PERIODO = h.PERIODO_ALTA
+
+                    THEN 1
+                    ELSE 0
+
+                END
+
+            ) = 1
+
+            THEN 'OK'
+
+            ELSE 'ERROR'
+
+        END AS ERR_SEGUIMIENTO
 
     FROM historial h
 
+    LEFT JOIN seguimientos s
+        ON s.RFC = h.RFC
+
     GROUP BY
-        RFC,
-        PERIODO_ALTA
+        h.RFC,
+        h.PERIODO_ALTA
 
 )
+
+/*---------------------------------------------------------
+  Resultado final
+---------------------------------------------------------*/
+SELECT
+
+    RFC,
+
+    PRIMER_PERIODO,
+
+    ULTIMO_PERIODO,
+
+    PERIODO_ALTA,
+
+    PERIODOS_REPORTADOS,
+
+    TOTAL_APARICIONES,
+
+    TRIM(
+
+        CASE
+            WHEN ERR_NOMBRE='ERROR'
+            THEN 'ERR_NOMBRE_FIDEICOMISO; '
+            ELSE ''
+        END ||
+
+        CASE
+            WHEN ERR_MUNICIPIO='ERROR'
+            THEN 'ERR_MUNICIPIO; '
+            ELSE ''
+        END ||
+
+        CASE
+            WHEN ERR_LOCALIDAD='ERROR'
+            THEN 'ERR_LOCALIDAD; '
+            ELSE ''
+        END ||
+
+        CASE
+            WHEN ERR_GRUPO_RIESGO='ERROR'
+            THEN 'ERR_GRUPO_RIESGO; '
+            ELSE ''
+        END ||
+
+        CASE
+            WHEN ERR_ACTIVIDAD='ERROR'
+            THEN 'ERR_ACTIVIDAD_ECONOMICA; '
+            ELSE ''
+        END ||
+
+        CASE
+            WHEN ERR_TIPO_CARTERA='ERROR'
+            THEN 'ERR_TIPO_CARTERA; '
+            ELSE ''
+        END ||
+
+        CASE
+            WHEN ERR_SEGUIMIENTO='ERROR'
+            THEN 'ERR_SEGUIMIENTO_431; '
+            ELSE ''
+        END
+
+    , '; ') AS ERRORES
+
+FROM auditoria
+
+WHERE
+       ERR_NOMBRE='ERROR'
+    OR ERR_MUNICIPIO='ERROR'
+    OR ERR_LOCALIDAD='ERROR'
+    OR ERR_GRUPO_RIESGO='ERROR'
+    OR ERR_ACTIVIDAD='ERROR'
+    OR ERR_TIPO_CARTERA='ERROR'
+    OR ERR_SEGUIMIENTO='ERROR'
+
+ORDER BY RFC;
