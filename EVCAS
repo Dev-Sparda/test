@@ -73,3 +73,70 @@ LEFT JOIN ULTIMA_BAJA UB
 
 ORDER BY
     U.ID_CNBV;
+
+--cc_0005
+WITH fideicomisos AS (
+
+    SELECT DISTINCT
+           RFC,
+           PERIODO
+    FROM R04C0430
+    WHERE T_ALTA = 501
+      AND TIPO_CAR IN (330,340)
+
+),
+
+historial AS (
+
+    SELECT t.*
+    FROM R04C0430 t
+    JOIN fideicomisos f
+      ON t.RFC = f.RFC
+
+),
+
+seguimientos AS (
+
+    SELECT DISTINCT
+           RFC,
+           PERIODO
+    FROM R04C0431
+
+)
+
+SELECT
+
+    h.RFC,
+
+    COUNT(*) AS TOTAL_REGISTROS,
+
+    COUNT(DISTINCT h.NOMB_CLI)  AS NOMBRES,
+    COUNT(DISTINCT h.MUNI_CRED) AS MUNICIPIOS,
+    COUNT(DISTINCT h.LOC_CRED)  AS LOCALIDADES,
+    COUNT(DISTINCT h.GPO_RIES)  AS GRUPOS_RIESGO,
+    COUNT(DISTINCT h.ACT_ECO)   AS ACTIVIDADES,
+    COUNT(DISTINCT h.TIPO_CAR)  AS TIPOS_CARTERA,
+
+    CASE
+        WHEN MAX(
+            CASE
+                WHEN s.RFC IS NOT NULL THEN 1
+                ELSE 0
+            END
+        ) = 1
+        THEN 'SI'
+        ELSE 'NO'
+    END AS TIENE_SEGUIMIENTO
+
+FROM historial h
+
+LEFT JOIN fideicomisos f
+       ON f.RFC = h.RFC
+
+LEFT JOIN seguimientos s
+       ON s.RFC = f.RFC
+      AND s.PERIODO = f.PERIODO
+
+GROUP BY h.RFC
+
+ORDER BY h.RFC;
